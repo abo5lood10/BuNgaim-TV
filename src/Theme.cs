@@ -1,0 +1,563 @@
+﻿// هوية DsMaN "Default" (أخضر داكن زجاجي) — الأرقام منسوخة حرفياً من theme\default theme\reference\DsMaN-theme-code.cs.txt
+// (T، GlassRenderer، NameArt، WinBtn، Cmd) وتمّ تكييفها لـ NEXT Boost.
+using System;
+using System.Collections.Generic;
+using System.Drawing;
+using System.Drawing.Drawing2D;
+using System.Drawing.Text;
+using System.Runtime.InteropServices;
+using System.Windows.Forms;
+
+namespace NextBoost
+{
+    static class T
+    {
+        public static int W = 940, H = 700;
+        public static Color Text = Color.FromArgb(226, 240, 230), Dim = Color.FromArgb(126, 160, 142), Green = Color.FromArgb(52, 199, 89),
+            GreenDark = Color.FromArgb(22, 120, 46), Red = Color.FromArgb(224, 72, 72), Yellow = Color.FromArgb(240, 196, 70),
+            WindowBack = Color.FromArgb(20, 44, 33), Field = Color.FromArgb(22, 48, 36);
+        public const string Face = "Bahnschrift";   // احتياط فقط
+        static Dictionary<int, Font> fontCache = new Dictionary<int, Font>();
+        public static Font F(float s, FontStyle st)
+        {
+            int key = (int)(s * 10) * 8 + (int)st; Font f;
+            if (fontCache.TryGetValue(key, out f)) return f;
+            FontFamily ff = Fonts.Family;
+            f = ff != null && ff.IsStyleAvailable(st) ? new Font(ff, s, st) : new Font(Face, s, st);
+            fontCache[key] = f; return f;
+        }
+        public static Font F(float s) { return F(s, FontStyle.Regular); }
+
+        public static GraphicsPath RR(RectangleF r, float rad)
+        {
+            GraphicsPath p = new GraphicsPath(); float d = Math.Min(rad * 2, Math.Min(r.Width, r.Height));
+            p.AddArc(r.X, r.Y, d, d, 180, 90); p.AddArc(r.Right - d, r.Y, d, d, 270, 90);
+            p.AddArc(r.Right - d, r.Bottom - d, d, d, 0, 90); p.AddArc(r.X, r.Bottom - d, d, d, 90, 90);
+            p.CloseFigure(); return p;
+        }
+
+        // خلفية النافذة كلها (تدرّج واحد)، والأزرار ترسم الجزء اللي تحتها منها عشان ما يبان قص
+        public static Bitmap StaticBg;
+        static Bitmap grad;
+        public static void ResetBg() { grad = null; }
+        public static Bitmap Gradient()
+        {
+            if (grad != null && grad.Width == W && grad.Height == H) return grad;
+            grad = new Bitmap(W, H, System.Drawing.Imaging.PixelFormat.Format32bppPArgb);
+            using (Graphics g = Graphics.FromImage(grad))
+            using (LinearGradientBrush b = new LinearGradientBrush(new Rectangle(0, 0, W, H), Color.FromArgb(52, 82, 64), Color.FromArgb(15, 33, 22), 62f))
+                g.FillRectangle(b, 0, 0, W, H);
+            return grad;
+        }
+        public static void Back(Graphics g, Control c)
+        {
+            Bitmap b = StaticBg ?? Gradient();
+            g.DrawImageUnscaled(b, -c.Left, -c.Top);
+        }
+
+        // زر زجاجي: مربع مدوّر (نصف قطر 14)، لمعة خفيفة فوق، الـ hover يفتّح التعبئة
+        public static void Glass1(Graphics g, RectangleF r, bool on, Color? tint, bool hover)
+        {
+            float rad = Math.Min(14f, r.Height / 2f);
+            RectangleF f = new RectangleF(r.X, r.Y, r.Width, r.Height + 1);
+            using (GraphicsPath p = RR(r, rad))
+            {
+                Color top, bot, e1, e2;
+                if (on)
+                {
+                    top = tint ?? (hover ? Color.FromArgb(54, 212, 90) : Color.FromArgb(42, 172, 71));
+                    bot = tint.HasValue ? Color.FromArgb(tint.Value.R * 3 / 5, tint.Value.G * 3 / 5, tint.Value.B * 3 / 5) : (hover ? Color.FromArgb(19, 143, 19) : Color.FromArgb(14, 112, 14));
+                    if (tint.HasValue && hover) { top = Color.FromArgb(Math.Min(255, top.R + 28), Math.Min(255, top.G + 28), Math.Min(255, top.B + 28)); }
+                    e1 = e2 = hover ? Color.FromArgb(224, 255, 255, 255) : Color.FromArgb(128, 168, 240, 184);
+                }
+                else
+                {
+                    top = Color.FromArgb(hover ? 72 : 48, 255, 255, 255); bot = Color.FromArgb(hover ? 28 : 15, 255, 255, 255);
+                    e1 = Color.FromArgb(112, 255, 255, 255); e2 = Color.FromArgb(24, 255, 255, 255);
+                }
+                using (LinearGradientBrush b = new LinearGradientBrush(f, top, bot, 90f)) g.FillPath(b, p);
+                RectangleF sh = new RectangleF(r.X + 1, r.Y + 1, r.Width - 2, Math.Min(20f, r.Height * 0.45f));
+                if (sh.Height > 2)
+                    using (GraphicsPath sp = RR(sh, Math.Min(rad - 1, sh.Height / 2f)))
+                    using (LinearGradientBrush sb = new LinearGradientBrush(new RectangleF(sh.X, sh.Y, sh.Width, sh.Height + 1), Color.FromArgb(56, 255, 255, 255), Color.FromArgb(0, 255, 255, 255), 90f)) g.FillPath(sb, sp);
+                using (LinearGradientBrush eb = new LinearGradientBrush(f, e1, e2, 90f))
+                using (Pen pen = new Pen(eb, 1f)) g.DrawPath(pen, p);
+            }
+        }
+
+        // بطاقة زجاجية: تعبئة شفافة، حافة بيضاء خفيفة
+        public static void Card(Graphics g, RectangleF r, float rad)
+        {
+            using (GraphicsPath p = RR(r, rad))
+            {
+                RectangleF f = new RectangleF(r.X, r.Y, r.Width, r.Height + 1);
+                using (LinearGradientBrush b = new LinearGradientBrush(f, Color.FromArgb(48, 255, 255, 255), Color.FromArgb(15, 255, 255, 255), 90f)) g.FillPath(b, p);
+                using (LinearGradientBrush eb = new LinearGradientBrush(f, Color.FromArgb(112, 255, 255, 255), Color.FromArgb(24, 255, 255, 255), 90f))
+                using (Pen pen = new Pen(eb, 1f)) g.DrawPath(pen, p);
+            }
+        }
+
+        public static void FieldBox(Graphics g, RectangleF r)
+        {
+            using (GraphicsPath p = RR(r, 12))
+            {
+                using (Brush b = new SolidBrush(Field)) g.FillPath(b, p);
+                using (Pen pen = new Pen(Color.FromArgb(90, 52, 199, 89), 1.5f)) g.DrawPath(pen, p);
+            }
+        }
+
+        public static void Pill(Graphics g, RectangleF r, bool on, Color? tint) { Glass1(g, r, on, tint, false); }
+        public static void PillH(Graphics g, RectangleF r, bool on, Color? tint, bool hover) { Glass1(g, r, on, tint, hover); }
+
+        static bool HasArabic(string s) { foreach (char ch in s) if (ch >= '\u0600' && ch <= '\u06FF') return true; return false; }
+        public static void Txt(Graphics g, string s, Font f, Color c, RectangleF r, StringAlignment h)
+        {
+            bool rtl = HasArabic(s);
+            // النص العربي يُرسم من اليمين لليسار عشان يطلع الترتيب صح مع الكلمات الإنجليزية؛ والمحاذاة تبقى بالاتجاه الفيزيائي المطلوب
+            StringAlignment al = rtl ? (h == StringAlignment.Near ? StringAlignment.Far : (h == StringAlignment.Far ? StringAlignment.Near : h)) : h;
+            using (StringFormat sf = new StringFormat { Alignment = al, LineAlignment = StringAlignment.Center, Trimming = StringTrimming.EllipsisCharacter, FormatFlags = StringFormatFlags.NoWrap | (rtl ? StringFormatFlags.DirectionRightToLeft : 0) })
+            using (Brush b = new SolidBrush(c)) g.DrawString(s, f, b, r, sf);
+        }
+        // رموز مرسومة (الخط ما فيه ★ ▶ ■ ▾، فنرسمها أشكال عشان كل النص يبقى بخط الهوية)
+        public static void Icon(Graphics g, string kind, float cx, float cy, float s, Color c)
+        {
+            using (Brush b = new SolidBrush(c))
+            using (Pen p = new Pen(c, 2f) { StartCap = LineCap.Round, EndCap = LineCap.Round, LineJoin = LineJoin.Round })
+            {
+                switch (kind)
+                {
+                    case "play": g.FillPolygon(b, new PointF[] { new PointF(cx - s * 0.45f, cy - s * 0.55f), new PointF(cx - s * 0.45f, cy + s * 0.55f), new PointF(cx + s * 0.6f, cy) }); break;
+                    case "stop": using (GraphicsPath r = RR(new RectangleF(cx - s * 0.5f, cy - s * 0.5f, s, s), 2.5f)) g.FillPath(b, r); break;
+                    case "starO":
+                        {
+                            var sp = new PointF[10];
+                            for (int i = 0; i < 10; i++) { float rad = i % 2 == 0 ? s * 0.62f : s * 0.27f; double a = Math.PI * i / 5 - Math.PI / 2; sp[i] = new PointF(cx + (float)(rad * Math.Cos(a)), cy + (float)(rad * Math.Sin(a))); }
+                            using (Pen po = new Pen(c, 1.6f) { LineJoin = LineJoin.Round }) g.DrawPolygon(po, sp); break;
+                        }
+                    case "full":
+                        { float q = s * 0.55f, k = s * 0.28f;
+                          g.DrawLines(p, new PointF[] { new PointF(cx - q, cy - q + k), new PointF(cx - q, cy - q), new PointF(cx - q + k, cy - q) });
+                          g.DrawLines(p, new PointF[] { new PointF(cx + q - k, cy - q), new PointF(cx + q, cy - q), new PointF(cx + q, cy - q + k) });
+                          g.DrawLines(p, new PointF[] { new PointF(cx - q, cy + q - k), new PointF(cx - q, cy + q), new PointF(cx - q + k, cy + q) });
+                          g.DrawLines(p, new PointF[] { new PointF(cx + q - k, cy + q), new PointF(cx + q, cy + q), new PointF(cx + q, cy + q - k) }); break; }
+                    case "vol": case "mute":
+                        { g.FillPolygon(b, new PointF[] { new PointF(cx - s * 0.62f, cy - s * 0.22f), new PointF(cx - s * 0.30f, cy - s * 0.22f), new PointF(cx + s * 0.05f, cy - s * 0.55f), new PointF(cx + s * 0.05f, cy + s * 0.55f), new PointF(cx - s * 0.30f, cy + s * 0.22f), new PointF(cx - s * 0.62f, cy + s * 0.22f) });
+                          if (kind == "vol") { g.DrawArc(p, cx - s * 0.15f, cy - s * 0.30f, s * 0.55f, s * 0.60f, -50, 100); g.DrawArc(p, cx - s * 0.15f, cy - s * 0.52f, s * 0.90f, s * 1.04f, -50, 100); }
+                          else { g.DrawLine(p, cx + s * 0.2f, cy - s * 0.3f, cx + s * 0.75f, cy + s * 0.3f); g.DrawLine(p, cx + s * 0.2f, cy + s * 0.3f, cx + s * 0.75f, cy - s * 0.3f); } break; }
+                    case "chev": g.DrawLines(p, new PointF[] { new PointF(cx - s * 0.5f, cy - s * 0.25f), new PointF(cx, cy + s * 0.3f), new PointF(cx + s * 0.5f, cy - s * 0.25f) }); break;
+                    case "star":
+                        var pts = new PointF[10];
+                        for (int i = 0; i < 10; i++) { float rad = i % 2 == 0 ? s * 0.62f : s * 0.26f; double a = Math.PI * i / 5 - Math.PI / 2; pts[i] = new PointF(cx + (float)(rad * Math.Cos(a)), cy + (float)(rad * Math.Sin(a))); }
+                        g.FillPolygon(b, pts); break;
+                }
+            }
+        }
+        public static void Setup(Graphics g) { g.SmoothingMode = SmoothingMode.AntiAlias; g.TextRenderingHint = TextRenderingHint.ClearTypeGridFit; }
+
+        // قائمة منبثقة بنمط الزجاج
+        public static ContextMenuStrip NewMenu()
+        {
+            ContextMenuStrip m = new ContextMenuStrip();
+            m.Renderer = new GlassRenderer(); m.Font = F(9.5f); m.ForeColor = Text; m.BackColor = Color.FromArgb(24, 52, 39);
+            m.ShowImageMargin = false; m.ShowCheckMargin = true; m.DropShadowEnabled = false;
+            m.Opened += delegate { m.Region = new Region(RR(new RectangleF(0, 0, m.Width, m.Height), 14)); };
+            return m;
+        }
+    }
+
+    class GlassRenderer : ToolStripRenderer
+    {
+        protected override void OnRenderToolStripBackground(ToolStripRenderEventArgs e)
+        {
+            using (LinearGradientBrush b = new LinearGradientBrush(new Rectangle(0, 0, e.ToolStrip.Width, e.ToolStrip.Height + 1), Color.FromArgb(34, 68, 51), Color.FromArgb(20, 44, 33), 90f))
+                e.Graphics.FillRectangle(b, 0, 0, e.ToolStrip.Width, e.ToolStrip.Height);
+        }
+        protected override void OnRenderToolStripBorder(ToolStripRenderEventArgs e)
+        {
+            e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+            using (GraphicsPath p = T.RR(new RectangleF(0.5f, 0.5f, e.ToolStrip.Width - 1.5f, e.ToolStrip.Height - 1.5f), 14))
+            using (Pen pen = new Pen(Color.FromArgb(70, 255, 255, 255), 1.2f)) e.Graphics.DrawPath(pen, p);
+        }
+        protected override void OnRenderImageMargin(ToolStripRenderEventArgs e) { }
+        protected override void OnRenderItemCheck(ToolStripItemImageRenderEventArgs e) { }
+        protected override void OnRenderMenuItemBackground(ToolStripItemRenderEventArgs e)
+        {
+            Graphics g = e.Graphics; g.SmoothingMode = SmoothingMode.AntiAlias;
+            Rectangle r = new Rectangle(4, 1, e.Item.Width - 8, e.Item.Height - 2);
+            if (e.Item.Selected && e.Item.Enabled)
+                using (GraphicsPath p = T.RR(r, 9))
+                {
+                    using (LinearGradientBrush b = new LinearGradientBrush(new Rectangle(r.X, r.Y, r.Width, r.Height + 1), Color.FromArgb(150, 52, 199, 89), Color.FromArgb(150, 22, 120, 46), 90f)) g.FillPath(b, p);
+                    using (Pen pen = new Pen(Color.FromArgb(90, 255, 255, 255))) g.DrawPath(pen, p);
+                }
+            ToolStripMenuItem mi = e.Item as ToolStripMenuItem;
+            if (mi != null && mi.Checked)
+                using (Brush b = new SolidBrush(e.Item.Selected ? Color.White : T.Green)) g.FillEllipse(b, 12, e.Item.Height / 2 - 4, 8, 8);
+        }
+        protected override void OnRenderItemText(ToolStripItemTextRenderEventArgs e)
+        {
+            e.TextColor = e.Item.Selected ? Color.White : T.Text;
+            base.OnRenderItemText(e);
+        }
+    }
+
+    // خط الواجهة (thmanyah sans) مدمج داخل الـ exe كمصدر (الترخيص يسمح بالتضمين داخل المنتج فقط)، وإلا Bahnschrift
+    static class Fonts
+    {
+        static PrivateFontCollection pfc; static FontFamily fam; static List<IntPtr> pins = new List<IntPtr>();
+        public static FontFamily Family { get { Init(); return fam; } }
+        static void Init()
+        {
+            if (pfc != null) return;
+            pfc = new PrivateFontCollection();
+            try
+            {
+                foreach (string r in new string[] { "f1.bin", "f2.bin" })
+                {
+                    byte[] b = Read(r); if (b == null) continue;
+                    IntPtr p = Marshal.AllocHGlobal(b.Length); Marshal.Copy(b, 0, p, b.Length); pins.Add(p); pfc.AddMemoryFont(p, b.Length);
+                }
+                foreach (FontFamily f in pfc.Families) if (f.Name == "thmanyah sans") fam = f;
+            }
+            catch { fam = null; }
+        }
+        static byte[] Read(string res)
+        {
+            byte[] key = { 0x5A, 0xC3, 0x27, 0x91 };
+            using (System.IO.Stream s = System.Reflection.Assembly.GetExecutingAssembly().GetManifestResourceStream(res))
+            {
+                if (s == null) return null;
+                using (System.IO.MemoryStream ms = new System.IO.MemoryStream())
+                {
+                    s.CopyTo(ms); byte[] b = ms.ToArray();
+                    for (int i = 0; i < b.Length; i++) b[i] ^= key[i & 3];
+                    return b;
+                }
+            }
+        }
+    }
+
+    // اسم البرنامج بخط الكرتون: مخطط مرسوم (مصدر name.bin) بأربع طبقات: ظل، حدّ غامق، تعبئة متدرجة، لمعة
+    static class NameArt
+    {
+        static GraphicsPath cartoon;
+        static GraphicsPath Cartoon
+        {
+            get
+            {
+                if (cartoon != null) return cartoon;
+                using (System.IO.Stream s = System.Reflection.Assembly.GetExecutingAssembly().GetManifestResourceStream("name.bin"))
+                using (System.IO.BinaryReader r = new System.IO.BinaryReader(s))
+                {
+                    int n = r.ReadInt32(); PointF[] pts = new PointF[n];
+                    for (int i = 0; i < n; i++) pts[i] = new PointF(r.ReadSingle(), r.ReadSingle());
+                    cartoon = new GraphicsPath(pts, r.ReadBytes(n), FillMode.Winding);
+                }
+                return cartoon;
+            }
+        }
+        public static float DrawText(Graphics g, float x, float y, float height)
+        {
+            RectangleF b0 = Cartoon.GetBounds(); float k = height / b0.Height;
+            using (GraphicsPath p = (GraphicsPath)Cartoon.Clone())
+            {
+                using (Matrix m = new Matrix(k, 0, 0, k, x + 4 - b0.X * k, y + 4 - b0.Y * k)) p.Transform(m);
+                RectangleF b = p.GetBounds();
+                using (Pen shadow = new Pen(Color.FromArgb(120, 0, 25, 8), height * 0.2f) { LineJoin = LineJoin.Round })
+                using (Pen outline = new Pen(Color.FromArgb(8, 46, 20), height * 0.15f) { LineJoin = LineJoin.Round })
+                using (Pen shine = new Pen(Color.FromArgb(150, 255, 255, 255), height * 0.06f) { LineJoin = LineJoin.Round })
+                using (LinearGradientBrush br = new LinearGradientBrush(new RectangleF(b.X, b.Y, b.Width, b.Height), Color.FromArgb(255, 252, 150), Color.FromArgb(52, 199, 89), 90f))
+                {
+                    GraphicsState st = g.Save(); g.TranslateTransform(2, 4); g.DrawPath(shadow, p); g.Restore(st);
+                    g.DrawPath(outline, p); g.FillPath(br, p);
+                    using (GraphicsPath hl = (GraphicsPath)p.Clone()) using (Matrix mm = new Matrix(1, 0, 0, 1, -1.5f, -1.5f)) { hl.Transform(mm); g.DrawPath(shine, hl); }
+                }
+                return b.Width + 8;
+            }
+        }
+    }
+
+    interface IBackHost { Bitmap Bg { get; } }
+
+    // أساس عناصر الواجهة المرسومة: خلفيتها هي نفس جزء الخلفية العام تحتها
+    class VC : Control
+    {
+        public bool Hover;
+        public VC()
+        {
+            SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw | ControlStyles.Selectable, true);
+            SetStyle(ControlStyles.Selectable, false); Cursor = Cursors.Hand;
+        }
+        protected override void OnPaintBackground(PaintEventArgs e) { T.Setup(e.Graphics); IBackHost h = FindForm() as IBackHost; Bitmap b = h != null ? h.Bg : (T.StaticBg ?? T.Gradient()); e.Graphics.DrawImageUnscaled(b, -Left, -Top); }
+        protected override void OnMouseEnter(EventArgs e) { Hover = true; Invalidate(); base.OnMouseEnter(e); }
+        protected override void OnMouseLeave(EventArgs e) { Hover = false; Invalidate(); base.OnMouseLeave(e); }
+    }
+
+    class Cmd : VC
+    {
+        public string Text2; public Action Act; public bool Primary; public Color? Tint; public Color? LabelColor; public string Glyph; public bool Chev;
+        public Cmd(string text, Action act, bool primary) { Text2 = text; Act = act; Primary = primary; }
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            Graphics g = e.Graphics; T.Setup(g);
+            T.PillH(g, new RectangleF(1, 1, Width - 3, Height - 3), Primary || Tint.HasValue, Tint, Hover);
+            Color col = LabelColor ?? (Primary ? Color.White : T.Text);
+            float pad = Chev ? 30 : 8;
+            T.Txt(g, Text2, T.F(9.5f, FontStyle.Bold), col, new RectangleF(pad, 0, Width - pad - 8, Height), StringAlignment.Center);
+            if (Chev) T.Icon(g, "chev", 18, Height / 2f, 9f, T.Dim);
+            if (Glyph != null)
+            {
+                SizeF m = g.MeasureString(Text2, T.F(9.5f, FontStyle.Bold));
+                T.Icon(g, Glyph, Text2.Length == 0 ? Width / 2f : Width / 2f + m.Width / 2f + 14, Height / 2f, 11f, col);
+            }
+        }
+        protected override void OnMouseClick(MouseEventArgs e) { if (Act != null) Act(); }
+    }
+    // مفتاح تشغيل/إيقاف بنمط الزجاج
+    class Tog : VC
+    {
+        public string Label; public bool On; public Color? Tint; public string Glyph; public event Action Changed;
+        public Tog(string label, bool on, Color? tint) { Label = label; On = on; Tint = tint; }
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            Graphics g = e.Graphics; T.Setup(g);
+            T.PillH(g, new RectangleF(1, 1, Width - 3, Height - 3), On, On ? Tint : null, Hover);
+            Color col = On ? (Tint.HasValue && Tint.Value.Equals(T.Yellow) ? Color.FromArgb(40, 34, 10) : Color.White) : (Tint.HasValue && Tint.Value.Equals(T.Yellow) ? T.Yellow : T.Dim);
+            T.Txt(g, Label, T.F(9f, FontStyle.Bold), col, new RectangleF(6, 0, Width - 12, Height), StringAlignment.Center);
+            if (Glyph != null) { SizeF m = g.MeasureString(Label, T.F(9f, FontStyle.Bold)); T.Icon(g, Glyph, Width / 2f + m.Width / 2f + 14, Height / 2f, 10f, col); }
+        }
+        protected override void OnMouseClick(MouseEventArgs e) { On = !On; Invalidate(); if (Changed != null) Changed(); }
+    }
+
+    class WinBtn : VC
+    {
+        int kind; Action act;   // 0 تصغير، 1 تكبير/استعادة، 2 إغلاق
+        public WinBtn(int k, Action a) { kind = k; act = a; }
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            Graphics g = e.Graphics; T.Setup(g); bool close = kind == 2;
+            T.Pill(g, new RectangleF(1, 1, Width - 3, Height - 3), Hover && close, Hover && close ? (Color?)T.Red : null);
+            if (Hover && !close)
+                using (GraphicsPath hp = T.RR(new RectangleF(1, 1, Width - 3, Height - 3), 12))
+                {
+                    using (Brush hb = new SolidBrush(Color.FromArgb(70, 255, 255, 255))) g.FillPath(hb, hp);
+                    using (Pen hpn = new Pen(Color.FromArgb(150, 255, 255, 255), 1.5f)) g.DrawPath(hpn, hp);
+                }
+            using (Pen p = new Pen(Color.White, 2f) { StartCap = LineCap.Round, EndCap = LineCap.Round, LineJoin = LineJoin.Round })
+            {
+                float cx = Width / 2f, cy = Height / 2f;
+                if (kind == 2) { g.DrawLine(p, cx - 5, cy - 5, cx + 5, cy + 5); g.DrawLine(p, cx - 5, cy + 5, cx + 5, cy - 5); }
+                else if (kind == 1) { using (GraphicsPath r = T.RR(new RectangleF(cx - 5.5f, cy - 5f, 11, 10), 2.5f)) g.DrawPath(p, r); }
+                else g.DrawLine(p, cx - 6, cy + 3, cx + 6, cy + 3);
+            }
+        }
+        protected override void OnMouseClick(MouseEventArgs e) { if (act != null) act(); }
+    }
+
+    // شريط صوت 0-200% بنمط الهوية: خط 100% معلّم، والرقم على اليمين
+    class VolSlide : VC
+    {
+        public float Value = 100, Max = 200; public event Action<float> Changed; bool drag;
+        const int LabelW = 58;
+        float RailL { get { return 12; } } float RailR { get { return Width - LabelW - 6; } }
+        float X(float v) { return RailL + v / Max * (RailR - RailL); }
+        void SetFrom(int mx) { float v = (mx - RailL) / (RailR - RailL) * Max; v = Math.Max(0f, Math.Min(Max, (float)Math.Round(v / 1f))); if (Math.Abs(v - 100f) < 3f) v = 100f; Value = v; Invalidate(); if (Changed != null) Changed(Value); }
+        public void Nudge(float v) { Value = Math.Max(0f, Math.Min(Max, v)); Invalidate(); if (Changed != null) Changed(Value); }
+        public void SetSilent(float v) { if (drag) return; Value = Math.Max(0f, Math.Min(Max, v)); Invalidate(); }
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            Graphics g = e.Graphics; T.Setup(g); float cy = Height / 2f, x = X(Value);
+            using (Pen p = new Pen(Color.FromArgb(60, 255, 255, 255), 5) { StartCap = LineCap.Round, EndCap = LineCap.Round }) g.DrawLine(p, RailL, cy, RailR, cy);
+            Color fill = Value > 150 ? T.Yellow : T.Green;
+            using (Pen p = new Pen(fill, 5) { StartCap = LineCap.Round, EndCap = LineCap.Round }) g.DrawLine(p, RailL, cy, Math.Max(RailL + 0.1f, x), cy);
+            using (Pen p = new Pen(Color.FromArgb(150, 255, 255, 255), 1.5f)) g.DrawLine(p, X(100), cy - 9, X(100), cy + 9);
+            using (Brush b = new SolidBrush(Color.FromArgb(60, 0, 0, 0))) g.FillEllipse(b, x - 8, cy - 7, 18, 18);
+            using (Brush b = new SolidBrush(Color.White)) g.FillEllipse(b, x - 9, cy - 9, 18, 18);
+            T.Txt(g, ((int)Value) + "%", T.F(9.5f, FontStyle.Bold), Value > 150 ? T.Yellow : T.Text, new RectangleF(Width - LabelW, 0, LabelW, Height), StringAlignment.Center);
+        }
+        protected override void OnMouseDown(MouseEventArgs e) { if (e.Button == MouseButtons.Left) { drag = true; Capture = true; SetFrom(e.X); } }
+        protected override void OnMouseMove(MouseEventArgs e) { base.OnMouseMove(e); if (drag) SetFrom(e.X); }
+        protected override void OnMouseUp(MouseEventArgs e) { drag = false; Capture = false; }
+        protected override void OnMouseWheel(MouseEventArgs e) { Value = Math.Max(0f, Math.Min(Max, Value + (e.Delta > 0 ? 5 : -5))); Invalidate(); if (Changed != null) Changed(Value); }
+        protected override void OnMouseDoubleClick(MouseEventArgs e) { Value = 100; Invalidate(); if (Changed != null) Changed(Value); }
+    }
+
+    // شريط تمرير عمودي بنمط الهوية: مجرى أبيض شفاف، ومقبض أخضر متدرّج بحواف مدوّرة
+    class VScroll : VC
+    {
+        public int Total, VisibleCount, TopIndex; public event Action<int> Scrolled; bool drag; float grab;
+        public VScroll() { Cursor = Cursors.Default; }
+        RectangleF Thumb()
+        {
+            float h = Height; float th = Math.Max(40f, h * VisibleCount / (float)Math.Max(VisibleCount, Total)); float range = Math.Max(1f, h - th);
+            float y = Total <= VisibleCount ? 0 : range * TopIndex / (float)(Total - VisibleCount);
+            return new RectangleF(0, y, Width, th);
+        }
+        int IndexFor(float thumbTop)
+        {
+            float h = Height; float th = Thumb().Height; float range = Math.Max(1f, h - th);
+            return (int)Math.Round(Math.Max(0f, Math.Min(range, thumbTop)) / range * Math.Max(0, Total - VisibleCount));
+        }
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            Graphics g = e.Graphics; T.Setup(g);
+            float cx = Width / 2f;
+            using (Pen p = new Pen(Color.FromArgb(46, 255, 255, 255), 5) { StartCap = LineCap.Round, EndCap = LineCap.Round }) g.DrawLine(p, cx, 3, cx, Height - 3);
+            if (Total <= VisibleCount) return;
+            RectangleF t = Thumb(); RectangleF tr = new RectangleF(cx - 4, t.Y, 8, t.Height);
+            using (GraphicsPath gp = T.RR(tr, 4))
+            {
+                using (LinearGradientBrush b = new LinearGradientBrush(new RectangleF(tr.X, tr.Y, tr.Width, tr.Height + 1), Hover || drag ? Color.FromArgb(54, 212, 90) : T.Green, T.GreenDark, 90f)) g.FillPath(b, gp);
+                using (Pen pen = new Pen(Color.FromArgb(Hover || drag ? 200 : 110, 255, 255, 255), 1f)) g.DrawPath(pen, gp);
+            }
+        }
+        protected override void OnMouseDown(MouseEventArgs e)
+        {
+            if (e.Button != MouseButtons.Left || Total <= VisibleCount) return;
+            RectangleF t = Thumb();
+            if (t.Contains(e.X, e.Y)) { drag = true; grab = e.Y - t.Y; Capture = true; }
+            else if (Scrolled != null) Scrolled(TopIndex + (e.Y < t.Y ? -VisibleCount : VisibleCount));
+        }
+        protected override void OnMouseMove(MouseEventArgs e) { base.OnMouseMove(e); if (drag && Scrolled != null) Scrolled(IndexFor(e.Y - grab)); }
+        protected override void OnMouseUp(MouseEventArgs e) { drag = false; Capture = false; Invalidate(); }
+        protected override void OnMouseWheel(MouseEventArgs e) { if (Scrolled != null) Scrolled(TopIndex + (e.Delta > 0 ? -3 : 3)); }
+    }
+    // سطر الحالة (نص يتغير)
+    class StatusLine : VC
+    {
+        string txt = ""; public Color Col = Color.FromArgb(255, 214, 54); public StringAlignment Al = StringAlignment.Near;
+        public StatusLine() { Cursor = Cursors.Default; }
+        public string Value { get { return txt; } set { if (txt != value) { txt = value; Invalidate(); } } }
+        protected override void OnPaint(PaintEventArgs e) { T.Setup(e.Graphics); T.Txt(e.Graphics, txt, T.F(9f), Col, new RectangleF(2, 0, Width - 4, Height), Al); }
+    }
+
+    // نافذة حوار بنمط البطاقة (بدل MessageBox)
+    class ThemedBox : Form, IBackHost
+    {
+        [DllImport("user32")] static extern bool ReleaseCapture();
+        [DllImport("user32")] static extern IntPtr SendMessage(IntPtr h, int msg, int w, int l);
+        readonly string title, message; readonly bool askYesNo; Bitmap bgBmp; public Bitmap Bg { get { return bgBmp; } }
+        public ThemedBox(string title, string message, bool yesNo)
+        {
+            this.title = title; this.message = message; askYesNo = yesNo;
+            FormBorderStyle = FormBorderStyle.None; StartPosition = FormStartPosition.CenterParent; ShowInTaskbar = false;
+            ClientSize = new Size(440, 210); BackColor = T.WindowBack; DoubleBuffered = true;
+            Region = new Region(T.RR(new RectangleF(0, 0, Width, Height), 20));
+            Cmd ok = new Cmd(yesNo ? "Yes" : "OK", delegate { DialogResult = DialogResult.OK; }, true) { Bounds = new Rectangle(yesNo ? 336 : 336, 154, 84, 34) };
+            Controls.Add(ok);
+            if (yesNo) Controls.Add(new Cmd("No", delegate { DialogResult = DialogResult.Cancel; }, false) { Bounds = new Rectangle(244, 154, 84, 34) });
+            MouseDown += delegate(object o, MouseEventArgs e) { if (e.Button == MouseButtons.Left) { ReleaseCapture(); SendMessage(Handle, 0xA1, 2, 0); } };
+            Bitmap bg = bgBmp = new Bitmap(440, 210);
+            using (Graphics g = Graphics.FromImage(bg)) { T.Setup(g); using (LinearGradientBrush b = new LinearGradientBrush(new Rectangle(0, 0, 440, 210), Color.FromArgb(52, 82, 64), Color.FromArgb(15, 33, 22), 62f)) g.FillRectangle(b, 0, 0, 440, 210); T.Card(g, new RectangleF(1, 1, 437, 207), 20); }
+            Paint += delegate(object o, PaintEventArgs e) { e.Graphics.DrawImageUnscaled(bg, 0, 0); T.Setup(e.Graphics); T.Txt(e.Graphics, title, T.F(14, FontStyle.Bold), T.Text, new RectangleF(26, 14, 388, 30), StringAlignment.Near); using (StringFormat sf = new StringFormat()) using (Brush br = new SolidBrush(T.Text)) e.Graphics.DrawString(message, T.F(10.5f), br, new RectangleF(26, 54, 388, 90), sf); };
+            foreach (Control c in Controls) { Control cc = c; cc.Tag = bg; }
+        }
+        protected override bool ProcessCmdKey(ref Message m, Keys k)
+        {
+            if (k == Keys.Enter) { DialogResult = DialogResult.OK; return true; }
+            if (k == Keys.Escape) { DialogResult = askYesNo ? DialogResult.Cancel : DialogResult.OK; return true; }
+            return base.ProcessCmdKey(ref m, k);
+        }
+        public static bool Ask(IWin32Window owner, string title, string msg) { using (ThemedBox b = new ThemedBox(title, msg, true)) return b.ShowDialog(owner) == DialogResult.OK; }
+        public static void Info(IWin32Window owner, string title, string msg) { using (ThemedBox b = new ThemedBox(title, msg, false)) b.ShowDialog(owner); }
+    }
+
+    // نافذة تسجيل الدخول: رابط السيرفر + اسم المستخدم + كلمة السر، وتتحقق من الحساب قبل ما تقبله
+    class LoginForm : Form, IBackHost
+    {
+        [DllImport("user32")] static extern bool ReleaseCapture();
+        [DllImport("user32")] static extern IntPtr SendMessage(IntPtr h, int msg, int w, int l);
+        public string Host, User, Pass; public bool SignedOut;
+        readonly TextBox tbHost = new TextBox(), tbUser = new TextBox(), tbPass = new TextBox();
+        readonly StatusLine msg = new StatusLine(); Bitmap bgBmp; public Bitmap Bg { get { return bgBmp; } }
+        bool busy; const int W = 470, H = 420;
+
+        public LoginForm(string host, string user, string pass, bool canSignOut)
+        {
+            FormBorderStyle = FormBorderStyle.None; StartPosition = FormStartPosition.CenterScreen; ShowInTaskbar = true; Text = "BuNgaim TV";
+            ClientSize = new Size(W, H); BackColor = T.WindowBack; DoubleBuffered = true;
+            Region = new Region(T.RR(new RectangleF(0, 0, Width, Height), 20));
+            int[] ys = { 92, 168, 244 }; TextBox[] tbs = { tbHost, tbUser, tbPass }; string[] vals = { host, user, pass };
+            Bitmap bg = bgBmp = new Bitmap(W, H);
+            using (Graphics g = Graphics.FromImage(bg))
+            {
+                T.Setup(g);
+                using (LinearGradientBrush b = new LinearGradientBrush(new Rectangle(0, 0, W, H), Color.FromArgb(52, 82, 64), Color.FromArgb(15, 33, 22), 62f)) g.FillRectangle(b, 0, 0, W, H);
+                T.Card(g, new RectangleF(1, 1, W - 3, H - 3), 20);
+                foreach (int y in ys) T.FieldBox(g, new RectangleF(28, y, W - 56, 40));
+            }
+            for (int i = 0; i < 3; i++)
+            {
+                TextBox tb = tbs[i]; tb.BorderStyle = BorderStyle.None; tb.BackColor = T.Field; tb.ForeColor = T.Text; tb.Font = T.F(11f);
+                tb.Bounds = new Rectangle(44, ys[i] + 10, W - 88, 24); tb.Text = vals[i] ?? ""; Controls.Add(tb);
+            }
+            tbPass.UseSystemPasswordChar = true;
+            tbHost.HandleCreated += (s, e) => Native.SendMessage(tbHost.Handle, 0x1501, (IntPtr)1, "http://example.com:8080");
+            msg.Bounds = new Rectangle(28, 296, W - 56, 24); msg.Value = ""; msg.Tag = bg; Controls.Add(msg);
+            Cmd ok = new Cmd("Sign in", TrySignIn, true) { Bounds = new Rectangle(W - 28 - 130, 352, 130, 40), Tag = bg };
+            Cmd cancel = new Cmd("Cancel", delegate { DialogResult = DialogResult.Cancel; }, false) { Bounds = new Rectangle(W - 28 - 130 - 8 - 100, 352, 100, 40), Tag = bg };
+            Controls.Add(ok); Controls.Add(cancel);
+            if (canSignOut) Controls.Add(new Cmd("Sign out", delegate { SignedOut = true; DialogResult = DialogResult.OK; }, false) { Bounds = new Rectangle(28, 352, 100, 40), LabelColor = Color.FromArgb(255, 150, 150), Tag = bg });
+            MouseDown += delegate(object o, MouseEventArgs e) { if (e.Button == MouseButtons.Left) { ReleaseCapture(); SendMessage(Handle, 0xA1, 2, 0); } };
+            Paint += delegate(object o, PaintEventArgs e)
+            {
+                e.Graphics.DrawImageUnscaled(bg, 0, 0); T.Setup(e.Graphics);
+                T.Txt(e.Graphics, "Sign in", T.F(16, FontStyle.Bold), T.Text, new RectangleF(28, 16, W - 56, 32), StringAlignment.Near);
+                T.Txt(e.Graphics, "Enter your own IPTV subscription details", T.F(9.5f), T.Dim, new RectangleF(28, 50, W - 56, 22), StringAlignment.Near);
+                string[] lb = { "Server URL", "Username", "Password" };
+                for (int i = 0; i < 3; i++) T.Txt(e.Graphics, lb[i], T.F(9f, FontStyle.Bold), T.Dim, new RectangleF(30, ys[i] - 20, 200, 18), StringAlignment.Near);
+            };
+        }
+
+        public void CenterOn(Rectangle wa) { StartPosition = FormStartPosition.Manual; Location = new Point(wa.X + (wa.Width - W) / 2, wa.Y + (wa.Height - H) / 2); }
+
+        protected override bool ProcessCmdKey(ref Message m, Keys k)
+        {
+            if (k == Keys.Enter) { TrySignIn(); return true; }
+            if (k == Keys.Escape) { DialogResult = DialogResult.Cancel; return true; }
+            return base.ProcessCmdKey(ref m, k);
+        }
+
+        void Say(string s, bool bad) { msg.Col = bad ? Color.FromArgb(255, 150, 150) : Color.FromArgb(255, 214, 54); msg.Value = s; }
+
+        static string NormalizeHost(string h)
+        {
+            h = (h ?? "").Trim(); if (h.Length == 0) return "";
+            if (!h.StartsWith("http://", StringComparison.OrdinalIgnoreCase) && !h.StartsWith("https://", StringComparison.OrdinalIgnoreCase)) h = "http://" + h;
+            Uri u; if (!Uri.TryCreate(h, UriKind.Absolute, out u)) return "";
+            return u.GetLeftPart(UriPartial.Authority);
+        }
+
+        void TrySignIn()
+        {
+            if (busy) return;
+            string host = NormalizeHost(tbHost.Text), user = tbUser.Text.Trim(), pass = tbPass.Text;
+            if (host == "" || user == "" || pass == "") { Say("Fill in all three fields (server URL, username, password).", true); return; }
+            busy = true; Say("Checking your account…", false);
+            System.Threading.ThreadPool.QueueUserWorkItem(delegate
+            {
+                string err = null;
+                try
+                {
+                    System.Net.ServicePointManager.SecurityProtocol = (System.Net.SecurityProtocolType)3072;
+                    var wc = new System.Net.WebClient { Encoding = System.Text.Encoding.UTF8 }; wc.Headers["User-Agent"] = "VLC/3.0.20";
+                    string json = wc.DownloadString(host + "/player_api.php?username=" + Uri.EscapeDataString(user) + "&password=" + Uri.EscapeDataString(pass));
+                    var root = new System.Web.Script.Serialization.JavaScriptSerializer().Deserialize<System.Collections.Generic.Dictionary<string, object>>(json);
+                    var ui = root != null && root.ContainsKey("user_info") ? root["user_info"] as System.Collections.Generic.Dictionary<string, object> : null;
+                    if (ui == null || !ui.ContainsKey("auth") || Convert.ToString(ui["auth"]) != "1") err = "Wrong username or password.";
+                    else if (ui.ContainsKey("status") && Convert.ToString(ui["status"]) != "Active") err = "This subscription is " + Convert.ToString(ui["status"]) + ".";
+                }
+                catch (Exception ex) { err = "Could not reach the server: " + ex.Message; }
+                try
+                {
+                    BeginInvoke(new Action(() =>
+                    {
+                        busy = false;
+                        if (err != null) { Say(err, true); return; }
+                        Host = host; User = user; Pass = pass; DialogResult = DialogResult.OK;
+                    }));
+                }
+                catch { }
+            });
+        }
+    }}
