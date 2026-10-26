@@ -560,4 +560,124 @@ namespace NextBoost
                 catch { }
             });
         }
+    }
+    // فحص التحديث (نفس فكرة DsMaN): ملف نصي صغير فيه version=... و url=... على رابط أو مسار. التحديث ما يتم إلا لما المستخدم يضغط الزر.
+    static class Updater
+    {
+        public const string Version = "1.3";
+        public const string DefaultSource = "https://raw.githubusercontent.com/abo5lood10/BuNgaim-TV/main/update.txt";
+        public static string Source = "";   // يتبدّل من settings.ini (UpdateUrl): رابط أو مسار ملف
+        public static volatile bool Available, Busy; public static string NewVersion = "", DownloadUrl = "", Message = "";
+
+        public static void Check(Action done)
+        {
+            if (Busy) return; Busy = true;
+            new System.Threading.Thread(delegate()
+            {
+                try
+                {
+                    string src = (Source ?? "").Trim(); if (src.Length == 0) src = DefaultSource;
+                    string txt;
+                    if (src.StartsWith("http", StringComparison.OrdinalIgnoreCase))
+                    {
+                        System.Net.ServicePointManager.SecurityProtocol = (System.Net.SecurityProtocolType)3072;
+                        using (System.Net.WebClient wc = new System.Net.WebClient()) { wc.Headers["User-Agent"] = "BuNgaimTV"; txt = wc.DownloadString(src); }
+                    }
+                    else txt = System.IO.File.ReadAllText(src);
+                    string v = "", url = "";
+                    foreach (string line in txt.Split('\n'))
+                    {
+                        int i = line.IndexOf('='); if (i < 0) continue;
+                        string k = line.Substring(0, i).Trim().ToLower(), val = line.Substring(i + 1).Trim();
+                        if (k == "version") v = val; else if (k == "url") url = val;
+                    }
+                    Version nv, cur = new Version(Version);
+                    if (v.Length > 0 && url.Length > 0 && System.Version.TryParse(v, out nv) && nv > cur) { NewVersion = v; DownloadUrl = url; Available = true; Message = "Update v" + v + " available"; }
+                    else { Available = false; Message = "You are up to date (v" + Version + ")"; }
+                }
+                catch (Exception ex) { Available = false; Message = "Update check failed: " + ex.Message; }
+                finally { Busy = false; if (done != null) done(); }
+            }) { IsBackground = true }.Start();
+        }
+
+        // ينزّل الـ exe الجديد جنب الحالي، ويتأكد إنه برنامج ويندوز بحجم معقول، وبعد ما نغلق يبدّله ويشغّله من جديد
+        public static void Apply()
+        {
+            string exe = Application.ExecutablePath, tmp = exe + ".new";
+            if (DownloadUrl.StartsWith("http", StringComparison.OrdinalIgnoreCase))
+            {
+                System.Net.ServicePointManager.SecurityProtocol = (System.Net.SecurityProtocolType)3072;
+                using (System.Net.WebClient wc = new System.Net.WebClient()) { wc.Headers["User-Agent"] = "BuNgaimTV"; wc.DownloadFile(DownloadUrl, tmp); }
+            }
+            else System.IO.File.Copy(DownloadUrl, tmp, true);
+            using (System.IO.FileStream fs = System.IO.File.OpenRead(tmp))
+                if (fs.Length < 200000 || fs.ReadByte() != 'M' || fs.ReadByte() != 'Z') { fs.Close(); System.IO.File.Delete(tmp); throw new Exception("the downloaded file is not a valid program"); }
+            string bat = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "bungaim_update.bat");
+            System.IO.File.WriteAllText(bat, "@echo off\r\nset n=0\r\n:r\r\nping 127.0.0.1 -n 3 >nul\r\nmove /y \"" + tmp + "\" \"" + exe + "\" >nul 2>nul\r\nif errorlevel 1 (set /a n+=1 & if %n% lss 10 goto r)\r\nstart \"\" \"" + exe + "\"\r\ndel \"%~f0\"\r\n");
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("cmd.exe", "/c \"" + bat + "\"") { CreateNoWindow = true, UseShellExecute = false });
+        }
+    }
+
+    // زر التحديث: يظهر فقط لما يتوفر تحديث، بلون زر Y في يد Xbox 360 (أصفر) مثل DsMaN
+    class UpdateBtn : VC
+    {
+        public Action Act; bool hot;
+        public UpdateBtn() { Cursor = Cursors.Hand; Visible = false; }
+        protected override void OnMouseEnter(EventArgs e) { hot = true; Invalidate(); }
+        protected override void OnMouseLeave(EventArgs e) { hot = false; Invalidate(); }
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            Graphics g = e.Graphics; T.Setup(g);
+            RectangleF r = hot ? new RectangleF(1, 0, Width - 3, Height - 5) : new RectangleF(1, 1, Width - 3, Height - 3);
+            if (hot)
+                for (int i = 3; i >= 0; i--)
+                    using (GraphicsPath sp = T.RR(new RectangleF(r.X + 1 - i * 0.5f, r.Y + 3 - i * 0.2f, r.Width - 2 + i, r.Height + i * 0.8f), r.Height / 2.4f))
+                    using (Brush sb = new SolidBrush(Color.FromArgb(34 + (3 - i) * 8, 0, 0, 0))) g.FillPath(sb, sp);
+            using (GraphicsPath p = T.RR(r, r.Height / 2.4f))
+            {
+                using (LinearGradientBrush b = new LinearGradientBrush(new RectangleF(r.X, r.Y, r.Width, r.Height + 1), hot ? Color.FromArgb(255, 226, 96) : Color.FromArgb(255, 214, 54), hot ? Color.FromArgb(245, 180, 10) : Color.FromArgb(232, 164, 0), 90f)) g.FillPath(b, p);
+                using (Pen pen = new Pen(Color.FromArgb(150, 255, 255, 255), 1f)) g.DrawPath(pen, p);
+            }
+            T.Txt(g, "Update  v" + Updater.NewVersion, T.F(9.5f, FontStyle.Bold), Color.FromArgb(52, 36, 0), new RectangleF(0, 0, Width, Height), StringAlignment.Center);
+        }
+        protected override void OnMouseClick(MouseEventArgs e) { if (Act != null) Act(); }
+    }
+
+    // نافذة الإعدادات: الثيم (قريباً) + النسخة + فحص التحديث
+    class SettingsForm : Form, IBackHost
+    {
+        [DllImport("user32")] static extern bool ReleaseCapture();
+        [DllImport("user32")] static extern IntPtr SendMessage(IntPtr h, int msg, int w, int l);
+        Bitmap bgBmp; public Bitmap Bg { get { return bgBmp; } }
+        readonly StatusLine msg = new StatusLine(); const int W = 460, H = 330;
+        public SettingsForm()
+        {
+            FormBorderStyle = FormBorderStyle.None; StartPosition = FormStartPosition.CenterParent; ShowInTaskbar = false;
+            ClientSize = new Size(W, H); BackColor = T.WindowBack; DoubleBuffered = true;
+            Region = new Region(T.RR(new RectangleF(0, 0, Width, Height), 20));
+            Bitmap bg = bgBmp = new Bitmap(W, H);
+            using (Graphics g = Graphics.FromImage(bg))
+            {
+                T.Setup(g);
+                using (LinearGradientBrush b = new LinearGradientBrush(new Rectangle(0, 0, W, H), Color.FromArgb(52, 82, 64), Color.FromArgb(15, 33, 22), 62f)) g.FillRectangle(b, 0, 0, W, H);
+                T.Card(g, new RectangleF(1, 1, W - 3, H - 3), 20);
+                T.FieldBox(g, new RectangleF(28, 92, W - 56, 44));
+                T.FieldBox(g, new RectangleF(28, 164, W - 56, 44));
+            }
+            msg.Bounds = new Rectangle(28, 222, W - 56, 24); msg.Tag = bg; msg.Value = ""; Controls.Add(msg);
+            Controls.Add(new Cmd("Check for updates", delegate { msg.Col = Color.FromArgb(255, 214, 54); msg.Value = "Checking…"; Updater.Check(delegate { try { BeginInvoke(new Action(() => msg.Value = Updater.Message)); } catch { } }); }, false) { Bounds = new Rectangle(28, 268, 170, 40), Tag = bg });
+            Controls.Add(new Cmd("Close", delegate { DialogResult = DialogResult.OK; }, true) { Bounds = new Rectangle(W - 28 - 110, 268, 110, 40), Tag = bg });
+            MouseDown += delegate(object o, MouseEventArgs e) { if (e.Button == MouseButtons.Left) { ReleaseCapture(); SendMessage(Handle, 0xA1, 2, 0); } };
+            Paint += delegate(object o, PaintEventArgs e)
+            {
+                Graphics g = e.Graphics; g.DrawImageUnscaled(bg, 0, 0); T.Setup(g);
+                T.Txt(g, "Settings", T.F(16, FontStyle.Bold), T.Text, new RectangleF(28, 16, W - 56, 32), StringAlignment.Near);
+                T.Txt(g, "BuNgaim TV  v" + Updater.Version, T.F(9.5f), T.Dim, new RectangleF(28, 50, W - 56, 22), StringAlignment.Near);
+                T.Txt(g, "Theme", T.F(11f, FontStyle.Bold), T.Text, new RectangleF(44, 92, 200, 44), StringAlignment.Near);
+                T.Txt(g, "Coming soon", T.F(10f, FontStyle.Bold), Color.FromArgb(255, 214, 54), new RectangleF(W - 44 - 220, 92, 220, 44), StringAlignment.Far);
+                T.Txt(g, "Updates", T.F(11f, FontStyle.Bold), T.Text, new RectangleF(44, 164, 200, 44), StringAlignment.Near);
+                T.Txt(g, "Only when you press the yellow button", T.F(9f), T.Dim, new RectangleF(W - 44 - 260, 164, 260, 44), StringAlignment.Far);
+            };
+        }
+        protected override bool ProcessCmdKey(ref Message m, Keys k) { if (k == Keys.Escape || k == Keys.Enter) { DialogResult = DialogResult.OK; return true; } return base.ProcessCmdKey(ref m, k); }
     }}

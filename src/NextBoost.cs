@@ -168,7 +168,7 @@ namespace NextBoost
         readonly Panel videoPanel = new Panel { BackColor = Color.Black, Visible = true };
         WinBtn btnMin, btnMax, btnClose;
         Cmd cmdCat, cmdPreset, btnPlay, btnStop, btnRefresh, btnFull, btnMute; VolSlide vol; MpvIpc curIpc; bool muted;
-        Tog tgFav, tgAuto; Cmd btnAccount; readonly List<Tog> chips = new List<Tog>();
+        Tog tgFav, tgAuto; Cmd btnAccount, btnSettings; UpdateBtn btnUpdate; readonly List<Tog> chips = new List<Tog>();
         StatusLine status, count, hint; VScroll vscroll;
         readonly List<Control> uiControls = new List<Control>();
         int preset, catIdx, chip;
@@ -225,7 +225,7 @@ namespace NextBoost
             preset = Math.Max(0, Math.Min(Presets.Names.Length - 1, cfg.Int("Preset", 1)));
             BuildUi();
             LoadFavorites(); LoadRecent();
-            Load += (s, e) => { ApplyLayout(); if (!EnsureAccount()) { BeginInvoke(new Action(Close)); return; } LoadChannelsAsync(false); };
+            Load += (s, e) => { ApplyLayout(); if (!EnsureAccount()) { BeginInvoke(new Action(Close)); return; } LoadChannelsAsync(false); StartUpdateChecks(); };
             SizeChanged += (s, e) => { ApplyLayout(); ShaderForVisibility(); }; LocationChanged += (s, e) => SyncVideoWindow();
             // mpv يعيد وضع نافذته لما يبدأ الفيديو، فنثبّتها بمكانها كل نص ثانية
             var syncTimer = new System.Windows.Forms.Timer { Interval = 1000 };
@@ -290,8 +290,10 @@ namespace NextBoost
             btnMax = new WinBtn(1, ToggleMax);
             btnClose = new WinBtn(2, delegate { Close(); });
             btnAccount = new Cmd("Account", ChangeAccount, false);
-            Controls.Add(btnMin); Controls.Add(btnMax); Controls.Add(btnClose); Controls.Add(btnAccount);
-            uiControls.AddRange(new Control[] { btnMin, btnMax, btnClose, btnAccount });
+            btnSettings = new Cmd("Settings", delegate { using (var sf = new SettingsForm()) sf.ShowDialog(this); }, false);
+            btnUpdate = new UpdateBtn { Act = DoUpdate }; Controls.Add(btnUpdate);
+            Controls.Add(btnMin); Controls.Add(btnMax); Controls.Add(btnClose); Controls.Add(btnAccount); Controls.Add(btnSettings);
+            uiControls.AddRange(new Control[] { btnMin, btnMax, btnClose, btnAccount, btnSettings });
 
             tbSearch.BorderStyle = BorderStyle.None; tbSearch.BackColor = T.Field; tbSearch.ForeColor = T.Text; tbSearch.Font = T.F(11f);
             tbSearch.HandleCreated += (s, e) => Native.SendMessage(tbSearch.Handle, 0x1501, (IntPtr)1, "Search channels (e.g. NFL or BEIN)…");
@@ -399,6 +401,26 @@ namespace NextBoost
             RoundVideoWindow(mpvWnd, r.Width, r.Height, !videoFull);   // ASYNC (ما نوقف الواجهة) | NOACTIVATE | NOZORDER | SHOWWINDOW
         }
 
+        // ---------- التحديث: يفحص عند التشغيل وكل ساعة، ويظهر زر أصفر؛ ما يتحدّث شي إلا لما تضغط ----------
+        void StartUpdateChecks()
+        {
+            Updater.Source = cfg.Get("UpdateUrl", "");
+            Action check = () => Updater.Check(() => { try { BeginInvoke(new Action(() => { btnUpdate.Visible = Updater.Available && !(videoFull && playing); btnUpdate.Invalidate(); })); } catch { } });
+            check();
+            var ut = new System.Windows.Forms.Timer { Interval = 3600000 }; ut.Tick += (s, e) => check(); ut.Start();
+        }
+
+        void DoUpdate()
+        {
+            if (!ThemedBox.Ask(this, "Update available", "Update to v" + Updater.NewVersion + " now?\n\nBuNgaim TV will close and open again by itself.")) return;
+            StopMpv(false); SetStatus("Downloading update v" + Updater.NewVersion + "…"); btnUpdate.Enabled = false;
+            new Thread(() =>
+            {
+                try { Updater.Apply(); BeginInvoke(new Action(Close)); }
+                catch (Exception ex) { Log.Write("update: " + ex.Message); BeginInvoke(new Action(() => { btnUpdate.Enabled = true; SetStatus("Update failed: " + ex.Message); })); }
+            }) { IsBackground = true }.Start();
+        }
+
         // ---------- الحساب: كل شخص يدخل اشتراكه الخاص (ما فيه حساب داخل البرنامج) ----------
         bool AccountComplete() { return acct.Get("host", "") != "" && acct.Get("username", "") != "" && acct.Get("password", "") != ""; }
 
@@ -469,7 +491,7 @@ namespace NextBoost
                 int W = ClientSize.Width, H = ClientSize.Height; T.W = W; T.H = H; T.ResetBg();
                 cards.Clear(); fields.Clear(); videoFrame = RectangleF.Empty;
                 bool full = videoFull && playing;
-                foreach (var c in uiControls) c.Visible = !full;
+                foreach (var c in uiControls) c.Visible = !full; btnUpdate.Visible = !full && Updater.Available;
                 btnFull.Visible = btnMute.Visible = vol.Visible = !full;
                 if (full)
                 {
@@ -477,7 +499,7 @@ namespace NextBoost
                     T.StaticBg = BuildBackground(); Invalidate(); SyncVideoWindow(); return;
                 }
                 Region = WindowState == FormWindowState.Normal ? new Region(T.RR(new RectangleF(0, 0, W, H), 22)) : null;
-                btnMin.Bounds = R(W - 10 - 38 * 3 - 12, 6, 38, 32); btnAccount.Bounds = R(btnMin.Left - 10 - 96, 6, 96, 32); btnMax.Bounds = R(W - 10 - 38 * 2 - 6, 6, 38, 32); btnClose.Bounds = R(W - 10 - 38, 6, 38, 32);
+                btnMin.Bounds = R(W - 10 - 38 * 3 - 12, 6, 38, 32); btnAccount.Bounds = R(btnMin.Left - 10 - 96, 6, 96, 32); btnSettings.Bounds = R(btnAccount.Left - 8 - 96, 6, 96, 32); btnUpdate.Bounds = R(btnSettings.Left - 8 - 150, 6, 150, 32); btnMax.Bounds = R(W - 10 - 38 * 2 - 6, 6, 38, 32); btnClose.Bounds = R(W - 10 - 38, 6, 38, 32);
 
                 int x0 = 16, yTop = 62, barH = 38;
                 int lw = Math.Max(390, Math.Min(480, W * 34 / 100));
@@ -556,7 +578,7 @@ namespace NextBoost
                 if (videoFull && playing) return b;
                 if (appIcon != null) { g.InterpolationMode = InterpolationMode.HighQualityBicubic; using (Bitmap ib = appIcon.ToBitmap()) g.DrawImage(ib, new Rectangle(14, 8, 24, 24)); }
                 float w = NameArt.DrawText(g, 46, 1, 34);
-                T.Txt(g, "v1.2", T.F(9f, FontStyle.Bold), T.Dim, new RectangleF(46 + w + 6, 6, 60, 28), StringAlignment.Near);
+                T.Txt(g, "v" + Updater.Version, T.F(9f, FontStyle.Bold), T.Dim, new RectangleF(46 + w + 6, 6, 60, 28), StringAlignment.Near);
                 foreach (var c in cards) T.Card(g, c, 18);
                 foreach (var f in fields) T.FieldBox(g, f);
                 if (!videoFrame.IsEmpty)
