@@ -1,0 +1,10 @@
+account.ini
+channels-cache.json
+favorites.txt
+recent.txt
+last-channel.txt
+settings.ini
+*.log
+*.exe
+mpv/
+src/fonts/

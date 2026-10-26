@@ -21,3 +21,7 @@ The UI font is not included (licence); the app falls back to Bahnschrift.
 Credentials are stored only in `account.ini` on your own PC and are git-ignored. Never commit it.
 
 Third-party: mpv, FSRCNNX (igv), ArtCNN (Artoriuz), uosc, each under its own licence.
+
+## Updates
+
+The app reads update.txt from this repo. To publish a new version: build, create a GitHub Release, attach the exe named BuNgaim-TV.exe, then raise version= in update.txt. Users only update when they press the yellow Update button.
