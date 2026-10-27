@@ -60,14 +60,53 @@ namespace NextBoost
         }
     }
 
+    // سجل مخفي: مجلد .bungaim مخفي جنب البرنامج، يتدوّر عند 400KB، وكلمات السر والحسابات تنمسح من أي سطر قبل الكتابة
     static class Log
     {
         static readonly object gate = new object();
-        public static string Path;
+        public static string Path, Dir;
+        public static void Init(string appDir)
+        {
+            try
+            {
+                Dir = System.IO.Path.Combine(appDir, ".bungaim"); Directory.CreateDirectory(Dir);
+                var di = new DirectoryInfo(Dir); di.Attributes |= FileAttributes.Hidden;
+                Path = System.IO.Path.Combine(Dir, "bungaim.log");
+                try { File.Delete(System.IO.Path.Combine(appDir, "NextBoost.log")); } catch { }
+            }
+            catch { }
+        }
+        static string Clean(string m)
+        {
+            m = Regex.Replace(m ?? "", @"(?i)(password|pass|pwd)=[^&\s]+", "$1=***");
+            m = Regex.Replace(m, @"(?i)/(live|movie|series)/[^/\s]+/[^/\s]+/", "/$1/***/***/");
+            return m;
+        }
         public static void Write(string m)
         {
-            try { lock (gate) { var fi = new FileInfo(Path); if (fi.Exists && fi.Length > 200 * 1024) fi.Delete(); File.AppendAllText(Path, DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") + "  " + m + Environment.NewLine, Encoding.UTF8); } }
+            if (Path == null) return;
+            try
+            {
+                lock (gate)
+                {
+                    var fi = new FileInfo(Path);
+                    if (fi.Exists && fi.Length > 400 * 1024) { string old = System.IO.Path.Combine(Dir, "bungaim.old.log"); try { File.Delete(old); } catch { } fi.MoveTo(old); }
+                    File.AppendAllText(Path, DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") + "  " + Clean(m) + Environment.NewLine, Encoding.UTF8);
+                }
+            }
             catch { }
+        }
+        // ينسخ السجل (القديم + الحالي) لملف ظاهر على سطح المكتب عشان ترسله لو صار شي
+        public static string ExportToDesktop()
+        {
+            string dst = System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory), "BuNgaim-TV-log.txt");
+            var sb = new StringBuilder("BuNgaim TV log  (v" + Updater.Version + ", " + Environment.OSVersion + ")" + Environment.NewLine);
+            lock (gate)
+            {
+                foreach (string n in new[] { "bungaim.old.log", "bungaim.log" })
+                { string p = System.IO.Path.Combine(Dir ?? "", n); if (File.Exists(p)) { try { using (var fs = new FileStream(p, FileMode.Open, FileAccess.Read, FileShare.ReadWrite)) using (var sr = new StreamReader(fs, Encoding.UTF8)) sb.Append(sr.ReadToEnd()); } catch { } } }
+            }
+            File.WriteAllText(dst, sb.ToString(), new UTF8Encoding(true)); return dst;
         }
     }
 
@@ -168,7 +207,7 @@ namespace NextBoost
         readonly Panel videoPanel = new Panel { BackColor = Color.Black, Visible = true };
         WinBtn btnMin, btnMax, btnClose;
         Cmd cmdCat, cmdPreset, btnPlay, btnStop, btnRefresh, btnFull, btnMute; VolSlide vol; MpvIpc curIpc; bool muted;
-        Tog tgFav, tgAuto; Cmd btnAccount, btnSettings; UpdateBtn btnUpdate; readonly List<Tog> chips = new List<Tog>();
+        Tog tgFav, tgAuto; Cmd btnAccount, btnSettings; DaysBadge btnDays; VerBtn verBtn; int nameEndX = 380; readonly List<Tog> chips = new List<Tog>();
         StatusLine status, count, hint; VScroll vscroll;
         readonly List<Control> uiControls = new List<Control>();
         int preset, catIdx, chip;
@@ -195,7 +234,7 @@ namespace NextBoost
             favPath = Path.Combine(appDir, "favorites.txt");
             lastPath = Path.Combine(appDir, "last-channel.txt");
             recentPath = Path.Combine(appDir, "recent.txt");
-            Log.Path = Path.Combine(appDir, "NextBoost.log");
+            Log.Init(appDir); Log.Write("start v" + Updater.Version + "  os=" + Environment.OSVersion + "  exe=" + Path.GetFileName(Application.ExecutablePath));
             cfg = new Ini(Path.Combine(appDir, "settings.ini"));
             acct = new Ini(Path.Combine(appDir, "account.ini"));
 
@@ -225,13 +264,13 @@ namespace NextBoost
             preset = Math.Max(0, Math.Min(Presets.Names.Length - 1, cfg.Int("Preset", 1)));
             BuildUi();
             LoadFavorites(); LoadRecent();
-            Load += (s, e) => { ApplyLayout(); if (!EnsureAccount()) { BeginInvoke(new Action(Close)); return; } LoadChannelsAsync(false); Prefs.ShareMode = cfg.Int("ShareMode", 0) == 1; StartUpdateChecks(); };
+            Load += (s, e) => { ApplyLayout(); if (!EnsureAccount()) { BeginInvoke(new Action(Close)); return; } LoadChannelsAsync(false); StartUpdateChecks(); };
             SizeChanged += (s, e) => { ApplyLayout(); ShaderForVisibility(); }; LocationChanged += (s, e) => SyncVideoWindow();
             // mpv يعيد وضع نافذته لما يبدأ الفيديو، فنثبّتها بمكانها كل نص ثانية
             var syncTimer = new System.Windows.Forms.Timer { Interval = 1000 };
             syncTimer.Tick += (s, e) =>
             {
-                if (!playing || mpv == null) return;
+                if (!playing || mpv == null || embedded) return;
                 try
                 {
                     if (mpv.HasExited) return;
@@ -242,7 +281,14 @@ namespace NextBoost
                 SyncVideoWindow();
             };
             syncTimer.Start();
-            FormClosing += (s, e) => { token++; SaveSettings(); try { if (mpv != null && !mpv.HasExited) mpv.Kill(); } catch { } };
+            FormClosing += (s, e) => { Log.Write("exit"); token++; SaveSettings(); try { if (mpv != null && !mpv.HasExited) mpv.Kill(); } catch { } };
+        }
+
+        // ESC يرجّع من الشاشة الكاملة حتى لو الفيديو مدمج داخل النافذة (المفاتيح تروح للنافذة الأم)
+        protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
+        {
+            if (keyData == Keys.Escape && videoFull) { ToggleVideoFull(); return true; }
+            return base.ProcessCmdKey(ref msg, keyData);
         }
 
         // ---------- النافذة: سحب من شريط العنوان + تغيير الحجم من الحواف ----------
@@ -290,8 +336,9 @@ namespace NextBoost
             btnMax = new WinBtn(1, ToggleMax);
             btnClose = new WinBtn(2, delegate { Close(); });
             btnAccount = new Cmd("Account", ChangeAccount, false);
-            btnSettings = new Cmd("Settings", delegate { using (var sf = new SettingsForm()) sf.ShowDialog(this); cfg.Set("ShareMode", Prefs.ShareMode ? "1" : "0"); cfg.Save(); }, false);
-            btnUpdate = new UpdateBtn { Act = DoUpdate }; Controls.Add(btnUpdate);
+            btnSettings = new Cmd("Settings", ShowSettingsMenu, false);
+            verBtn = new VerBtn { Act = DoUpdate, Visible = false }; btnDays = new DaysBadge { Text2 = "…" };
+            Controls.Add(verBtn); Controls.Add(btnDays); uiControls.Add(btnDays);
             Controls.Add(btnMin); Controls.Add(btnMax); Controls.Add(btnClose); Controls.Add(btnAccount); Controls.Add(btnSettings);
             uiControls.AddRange(new Control[] { btnMin, btnMax, btnClose, btnAccount, btnSettings });
 
@@ -401,23 +448,121 @@ namespace NextBoost
             RoundVideoWindow(mpvWnd, r.Width, r.Height, !videoFull);   // ASYNC (ما نوقف الواجهة) | NOACTIVATE | NOZORDER | SHOWWINDOW
         }
 
+        // ---------- قائمة الإعدادات (نفس ترتيب قائمة DsMaN) ----------
+        const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
+        bool StartsWithWindows() { try { using (var k = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(RunKey)) return k != null && k.GetValue("BuNgaim TV") != null; } catch { return false; } }
+        void SetStartsWithWindows(bool on)
+        {
+            try { using (var k = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(RunKey, true)) { if (on) k.SetValue("BuNgaim TV", "\"" + Application.ExecutablePath + "\""); else k.DeleteValue("BuNgaim TV", false); } Log.Write("start with windows: " + on); }
+            catch (Exception ex) { Log.Write("start with windows failed: " + ex.Message); }
+        }
+        void RestartSelf()
+        {
+            try { Process.Start(new ProcessStartInfo("cmd.exe", "/c ping 127.0.0.1 -n 3 >nul & start \"\" \"" + Application.ExecutablePath + "\"") { CreateNoWindow = true, UseShellExecute = false }); } catch { }
+            Close();
+        }
+
+        void ShowSettingsMenu()
+        {
+            var m = T.NewMenu();
+            m.Items.Add(new ToolStripMenuItem("BuNgaim TV  v" + Updater.Version) { Enabled = false });
+            var chk = new ToolStripMenuItem("Check for updates");
+            chk.Click += (s, e) => { SetStatus("Checking for updates…"); Updater.Check(() => { try { BeginInvoke(new Action(() => { SetStatus(Updater.Message); RefreshUpdateBtn(); })); } catch { } }); };
+            m.Items.Add(chk);
+            var src = new ToolStripMenuItem("Update source (link or file)…");
+            src.Click += (s, e) =>
+            {
+                string v = InputBox.Ask(this, "Update source", "A link or a file path to update.txt. Leave empty to use the default.", cfg.Get("UpdateUrl", ""));
+                if (v == null) return; v = v.Trim(); cfg.Set("UpdateUrl", v); cfg.Save(); Updater.Source = v;
+                SetStatus(v.Length > 0 ? "Update source saved" : "Update source cleared");
+                Updater.Check(() => { try { BeginInvoke(new Action(() => RefreshUpdateBtn())); } catch { } });
+            };
+            m.Items.Add(src);
+            var th = new ToolStripMenuItem("Theme");
+            th.DropDownItems.Add(new ToolStripMenuItem("Default (green glass)") { Checked = true });
+            th.DropDownItems.Add(new ToolStripMenuItem("More themes: coming soon") { Enabled = false });
+            m.Items.Add(th);
+            var guide = new ToolStripMenuItem("User guide");
+            guide.Click += (s, e) => ThemedBox.Info(this, "User guide", "Pick a channel and press Play (or double-click). Click the star to favorite. Volume goes up to 200%.\n\nThe quick buttons filter the list and search works inside the selected one. The version button turns yellow when an update is ready.");
+            m.Items.Add(guide);
+            m.Items.Add(new ToolStripSeparator());
+            var sw = new ToolStripMenuItem("Start with Windows") { Checked = StartsWithWindows() };
+            sw.Click += (s, e) => SetStartsWithWindows(!sw.Checked);
+            m.Items.Add(sw);
+            var sl = new ToolStripMenuItem("Save log…");
+            sl.Click += (s, e) => { try { string p = Log.ExportToDesktop(); SetStatus("Log saved to the Desktop: " + Path.GetFileName(p)); } catch (Exception ex) { SetStatus("Could not save the log: " + ex.Message); } };
+            m.Items.Add(sl);
+            var ss = new ToolStripMenuItem("Save Settings…");
+            ss.Click += (s, e) =>
+            {
+                SaveSettings();
+                using (var dlg = new SaveFileDialog { Filter = "BuNgaim TV settings (*.ini)|*.ini", FileName = "BuNgaim-TV-settings.ini" })
+                    if (dlg.ShowDialog(this) == DialogResult.OK) { try { File.Copy(Path.Combine(appDir, "settings.ini"), dlg.FileName, true); SetStatus("Settings saved"); } catch (Exception ex) { SetStatus("Could not save settings: " + ex.Message); } }
+            };
+            m.Items.Add(ss);
+            var ls = new ToolStripMenuItem("Load Settings…");
+            ls.Click += (s, e) =>
+            {
+                using (var dlg = new OpenFileDialog { Filter = "BuNgaim TV settings (*.ini)|*.ini" })
+                    if (dlg.ShowDialog(this) == DialogResult.OK)
+                    {
+                        try { File.Copy(dlg.FileName, Path.Combine(appDir, "settings.ini"), true); } catch (Exception ex) { SetStatus("Could not load settings: " + ex.Message); return; }
+                        if (ThemedBox.Ask(this, "Settings loaded", "Restart BuNgaim TV now to apply them?")) RestartSelf();
+                    }
+            };
+            m.Items.Add(ls);
+            m.Show(btnSettings, new Point(0, btnSettings.Height + 2));
+        }
+
         // ---------- التحديث: يفحص عند التشغيل وكل ساعة، ويظهر زر أصفر؛ ما يتحدّث شي إلا لما تضغط ----------
         void StartUpdateChecks()
         {
             Updater.Source = cfg.Get("UpdateUrl", "");
-            Action check = () => Updater.Check(() => { try { BeginInvoke(new Action(() => { btnUpdate.Visible = Updater.Available && !(videoFull && playing); btnUpdate.Invalidate(); })); } catch { } });
-            check();
-            var ut = new System.Windows.Forms.Timer { Interval = 3600000 }; ut.Tick += (s, e) => check(); ut.Start();
+            Action check = () => Updater.Check(() => { try { BeginInvoke(new Action(() => RefreshUpdateBtn())); } catch { } });
+            check(); RefreshSubscription();
+            var ut = new System.Windows.Forms.Timer { Interval = 3600000 }; ut.Tick += (s, e) => { check(); RefreshSubscription(); }; ut.Start();
         }
+
+        // ---------- الأيام المتبقية من الاشتراك (من user_info.exp_date) ----------
+        void RefreshSubscription()
+        {
+            string host = acct.Get("host", ""), u = acct.Get("username", ""), p = acct.Get("password", "");
+            if (host == "" || u == "" || p == "") return;
+            ThreadPool.QueueUserWorkItem(delegate
+            {
+                string text = ""; Color col = T.Dim;
+                try
+                {
+                    ServicePointManager.SecurityProtocol = (SecurityProtocolType)3072;
+                    var wc = new WebClient { Encoding = Encoding.UTF8 }; wc.Headers["User-Agent"] = "VLC/3.0.20";
+                    var root = new JavaScriptSerializer().Deserialize<Dictionary<string, object>>(wc.DownloadString(host + "/player_api.php?username=" + Uri.EscapeDataString(u) + "&password=" + Uri.EscapeDataString(p)));
+                    var ui = root["user_info"] as Dictionary<string, object>;
+                    string status = ui.ContainsKey("status") ? Convert.ToString(ui["status"]) : "";
+                    long exp = 0; if (ui.ContainsKey("exp_date") && ui["exp_date"] != null) long.TryParse(Convert.ToString(ui["exp_date"]), out exp);
+                    if (exp <= 0) text = "No expiry";
+                    else
+                    {
+                        double days = (new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc).AddSeconds(exp) - DateTime.UtcNow).TotalDays;
+                        if (days <= 0 || status.Equals("Expired", StringComparison.OrdinalIgnoreCase)) { text = "Expired"; col = Color.FromArgb(255, 150, 150); }
+                        else { int n = (int)Math.Ceiling(days); text = n == 1 ? "1 day left" : n + " days left"; if (n <= 7) col = Color.FromArgb(255, 214, 54); }
+                    }
+                    Log.Write("subscription: " + text + " (status " + status + ")");
+                }
+                catch (Exception ex) { Log.Write("subscription check failed: " + ex.Message); return; }
+                try { BeginInvoke(new Action(() => { btnDays.Text2 = text; btnDays.LabelColor = col == T.Dim ? (Color?)null : col; btnDays.Invalidate(); })); } catch { }
+            });
+        }
+
+        void RefreshUpdateBtn() { verBtn.Visible = Updater.Available && !(videoFull && playing); verBtn.Invalidate(); }
 
         void DoUpdate()
         {
             if (!ThemedBox.Ask(this, "Update available", "Update to v" + Updater.NewVersion + " now?\n\nBuNgaim TV will close and open again by itself.")) return;
-            StopMpv(false); SetStatus("Downloading update v" + Updater.NewVersion + "…"); btnUpdate.Enabled = false;
+            StopMpv(false); SetStatus("Downloading update v" + Updater.NewVersion + "…"); verBtn.Enabled = false;
             new Thread(() =>
             {
                 try { Updater.Apply(); BeginInvoke(new Action(Close)); }
-                catch (Exception ex) { Log.Write("update: " + ex.Message); BeginInvoke(new Action(() => { btnUpdate.Enabled = true; SetStatus("Update failed: " + ex.Message); })); }
+                catch (Exception ex) { Log.Write("update: " + ex.Message); BeginInvoke(new Action(() => { verBtn.Enabled = true; SetStatus("Update failed: " + ex.Message); })); }
             }) { IsBackground = true }.Start();
         }
 
@@ -457,11 +602,12 @@ namespace NextBoost
                     if (!EnsureAccount()) { Close(); return; }
                 }
                 else SaveAccount(lf.Host, lf.User, lf.Pass);
+                Log.Write("account changed (host " + acct.Get("host", "") + ")"); RefreshSubscription();
                 LoadChannelsAsync(true);
             }
         }
 
-        string activeShader; bool shaderOff;
+        string activeShader; bool shaderOff, embedded;
         // أثناء التصغير ما أحد يشوف الفيديو: نوقف فلتر الذكاء الاصطناعي ونرجّعه أول ما تفتح النافذة (يوفّر الكرت بدون أي أثر على الجودة)
         void ShaderForVisibility()
         {
@@ -491,7 +637,7 @@ namespace NextBoost
                 int W = ClientSize.Width, H = ClientSize.Height; T.W = W; T.H = H; T.ResetBg();
                 cards.Clear(); fields.Clear(); videoFrame = RectangleF.Empty;
                 bool full = videoFull && playing;
-                foreach (var c in uiControls) c.Visible = !full; btnUpdate.Visible = !full && Updater.Available;
+                foreach (var c in uiControls) c.Visible = !full; verBtn.Visible = !full && Updater.Available;
                 btnFull.Visible = btnMute.Visible = vol.Visible = !full;
                 if (full)
                 {
@@ -499,7 +645,7 @@ namespace NextBoost
                     T.StaticBg = BuildBackground(); Invalidate(); SyncVideoWindow(); return;
                 }
                 Region = WindowState == FormWindowState.Normal ? new Region(T.RR(new RectangleF(0, 0, W, H), 22)) : null;
-                btnMin.Bounds = R(W - 10 - 38 * 3 - 12, 6, 38, 32); btnAccount.Bounds = R(btnMin.Left - 10 - 96, 6, 96, 32); btnSettings.Bounds = R(btnAccount.Left - 8 - 96, 6, 96, 32); btnUpdate.Bounds = R(btnSettings.Left - 8 - 150, 6, 150, 32); btnMax.Bounds = R(W - 10 - 38 * 2 - 6, 6, 38, 32); btnClose.Bounds = R(W - 10 - 38, 6, 38, 32);
+                btnMin.Bounds = R(W - 10 - 38 * 3 - 12, 6, 38, 32); btnAccount.Bounds = R(btnMin.Left - 10 - 96, 6, 96, 32); btnSettings.Bounds = R(btnAccount.Left - 8 - 96, 6, 96, 32); btnMax.Bounds = R(W - 10 - 38 * 2 - 6, 6, 38, 32); btnClose.Bounds = R(W - 10 - 38, 6, 38, 32);
 
                 int x0 = 16, yTop = 62, barH = 38;
                 int lw = Math.Max(390, Math.Min(480, W * 34 / 100));
@@ -564,6 +710,7 @@ namespace NextBoost
                 }
 
                 T.StaticBg = BuildBackground();
+                btnDays.Bounds = R(nameEndX, 14, 150, 32); verBtn.Bounds = R(nameEndX + 162, 14, 150, 32);
                 foreach (var c in uiControls) c.Invalidate(); Invalidate();
             }
             finally { layouting = false; SyncVideoWindow(); }
@@ -577,9 +724,8 @@ namespace NextBoost
                 T.Setup(g); g.DrawImageUnscaled(T.Gradient(), 0, 0);
                 if (videoFull && playing) return b;
                 if (appIcon != null) { g.InterpolationMode = InterpolationMode.HighQualityBicubic; using (Bitmap ib = appIcon.ToBitmap()) g.DrawImage(ib, new Rectangle(14, 8, 24, 24)); }
-                float w = NameArt.DrawText(g, 46, 1, 34);
-                T.Txt(g, "v" + Updater.Version, T.F(9f, FontStyle.Bold), T.Dim, new RectangleF(46 + w + 6, 6, 60, 28), StringAlignment.Near);
-                foreach (var c in cards) T.Card(g, c, 18);
+                float w = NameArt.DrawText(g, 46, 5, 40); nameEndX = (int)(46 + w + 12);
+                                foreach (var c in cards) T.Card(g, c, 18);
                 foreach (var f in fields) T.FieldBox(g, f);
                 if (!videoFrame.IsEmpty)
                     using (GraphicsPath p = T.RR(videoFrame, 13))
@@ -661,8 +807,8 @@ namespace NextBoost
                 try
                 {
                     if (!force && File.Exists(cachePath) && (DateTime.Now - File.GetLastWriteTime(cachePath)).TotalHours < 12 && ReadCache()) { }
-                    else FetchFromApi();
-                    BeginInvoke(new Action(() => { BuildCatOrder(); Refilter(); SetStatus(string.Format("{0} channels — pick one and double-click to play", all.Count)); AutoStart(); }));
+                    else { FetchFromApi(); Log.Write("channels fetched from server"); }
+                    Log.Write("channels ready: " + all.Count); BeginInvoke(new Action(() => { BuildCatOrder(); Refilter(); SetStatus(string.Format("{0} channels — pick one and double-click to play", all.Count)); AutoStart(); }));
                 }
                 catch (Exception ex)
                 {
@@ -882,8 +1028,9 @@ namespace NextBoost
             string url = acct.Get("host", "") + "/live/" + acct.Get("username", "") + "/" + acct.Get("password", "") + "/" + c.Id + ".m3u8";
             pipeName = "nextboost-" + Process.GetCurrentProcess().Id + "-" + (++token);
             var a = new StringBuilder();
-            a.Append("--no-border --auto-window-resize=no --keepaspect-window=no --geometry=640x360+0+0 --title=\"BuNgaim TV - Video\"");
-            if (Prefs.ShareMode) a.Append(" --d3d11-flip=no");   // وضع المشاركة: يخلي التقاط النافذة (ديسكورد/OBS) يشوف الفيديو بدل الشاشة السوداء
+            embedded = true;   // الفيديو دايماً داخل نافذة البرنامج: ديسكورد/OBS يلتقطه مع النافذة
+            if (embedded) a.Append("--wid=" + videoPanel.Handle.ToInt64() + " --d3d11-flip=no");   // وضع المشاركة: الفيديو داخل نافذة البرنامج نفسها (ديسكورد/OBS يلتقطه مع النافذة)
+            else a.Append("--no-border --auto-window-resize=no --keepaspect-window=no --geometry=640x360+0+0 --title=\"BuNgaim TV - Video\"");
             a.Append(" --cursor-autohide=1000 --input-ipc-server=").Append(pipeName);
             a.Append(" --force-media-title=").Append(Q(c.Name));
             string sh = Presets.Shaders[presetIdx]; activeShader = sh != null ? Path.Combine(shaderDir, sh) : null; shaderOff = false;
@@ -894,9 +1041,9 @@ namespace NextBoost
             try { File.WriteAllText(lastPath, c.Id + "|" + c.Name, Encoding.UTF8); } catch { }
             AddRecent(c.Id);
             try { Thread.Sleep(400); mpv.PriorityClass = ProcessPriorityClass.High; Native.NoThrottle(mpv); } catch { }
-            Log.Write("play " + c.Id + " '" + c.Name + "' preset=" + presetIdx + " (owned overlay window)");
+            Log.Write("play " + c.Id + " '" + c.Name + "' preset=" + presetIdx + (embedded ? " (embedded video)" : " (owned overlay window)"));
             Process mpAttach = mpv; int myAttach = token; mpvWnd = IntPtr.Zero;
-            new Thread(() =>
+            if (!embedded) new Thread(() =>
             {
                 for (int i = 0; i < 150 && token == myAttach && !mpAttach.HasExited; i++)
                 {
@@ -985,7 +1132,9 @@ namespace NextBoost
             using (var mx = new Mutex(true, @"Local\NextBoost_Single", out created))
             {
                 if (!created) return 0;
-                Application.EnableVisualStyles(); Application.SetCompatibleTextRenderingDefault(false);
+                Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException); Application.EnableVisualStyles(); Application.SetCompatibleTextRenderingDefault(false);
+                Application.ThreadException += (s, e) => Log.Write("UI exception: " + e.Exception);
+                AppDomain.CurrentDomain.UnhandledException += (s, e) => Log.Write("fatal exception: " + e.ExceptionObject);
                 Application.Run(new MainForm(args));
             }
             return 0;
