@@ -532,22 +532,51 @@ namespace NextBoost
         {
             if (busy) return;
             string host = NormalizeHost(tbHost.Text), user = tbUser.Text.Trim(), pass = tbPass.Text;
+            // لو لصق رابط M3U كامل (get.php?username=..&password=..) نطلّع منه الحساب تلقائياً
+            var mu = System.Text.RegularExpressions.Regex.Match(tbHost.Text, @"[?&]username=([^&\s]+).*?[?&]password=([^&\s]+)", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            if (mu.Success) { user = Uri.UnescapeDataString(mu.Groups[1].Value); pass = Uri.UnescapeDataString(mu.Groups[2].Value); tbUser.Text = user; tbPass.Text = pass; tbHost.Text = host; }
             if (host == "" || user == "" || pass == "") { Say("Fill in all three fields (server URL, username, password).", true); return; }
             busy = true; Say("Checking your account…", false);
             System.Threading.ThreadPool.QueueUserWorkItem(delegate
             {
-                string err = null;
-                try
+                string err = null; string used = host;
+                // نجرّب الرابط كما كتبه، ولو فشل الاتصال نجرّب http/https الثاني
+                string[] tries = host.StartsWith("https://") ? new[] { host, "http://" + host.Substring(8) } : new[] { host, "https://" + host.Substring(7) };
+                foreach (string h in tries)
                 {
-                    System.Net.ServicePointManager.SecurityProtocol = (System.Net.SecurityProtocolType)3072;
-                    var wc = new System.Net.WebClient { Encoding = System.Text.Encoding.UTF8 }; wc.Headers["User-Agent"] = "VLC/3.0.20";
-                    string json = wc.DownloadString(host + "/player_api.php?username=" + Uri.EscapeDataString(user) + "&password=" + Uri.EscapeDataString(pass));
-                    var root = new System.Web.Script.Serialization.JavaScriptSerializer().Deserialize<System.Collections.Generic.Dictionary<string, object>>(json);
-                    var ui = root != null && root.ContainsKey("user_info") ? root["user_info"] as System.Collections.Generic.Dictionary<string, object> : null;
-                    if (ui == null || !ui.ContainsKey("auth") || Convert.ToString(ui["auth"]) != "1") err = "Wrong username or password.";
-                    else if (ui.ContainsKey("status") && Convert.ToString(ui["status"]) != "Active") err = "This subscription is " + Convert.ToString(ui["status"]) + ".";
+                    err = null;
+                    try
+                    {
+                        System.Net.ServicePointManager.SecurityProtocol = (System.Net.SecurityProtocolType)3072;
+                        var wc = new System.Net.WebClient { Encoding = System.Text.Encoding.UTF8 }; wc.Headers["User-Agent"] = "VLC/3.0.20";
+                        string json = wc.DownloadString(h + "/player_api.php?username=" + Uri.EscapeDataString(user) + "&password=" + Uri.EscapeDataString(pass));
+                        string shown = json.Length > 90 ? json.Substring(0, 90) : json; shown = shown.Replace("\r", " ").Replace("\n", " ");
+                        System.Collections.Generic.Dictionary<string, object> root = null;
+                        try { root = new System.Web.Script.Serialization.JavaScriptSerializer().Deserialize<System.Collections.Generic.Dictionary<string, object>>(json); } catch { }
+                        var ui = root != null && root.ContainsKey("user_info") ? root["user_info"] as System.Collections.Generic.Dictionary<string, object> : null;
+                        if (ui == null) err = "This address is not an IPTV server (or it does not accept this login). Server said: " + shown;
+                        else
+                        {
+                            string auth = ui.ContainsKey("auth") ? Convert.ToString(ui["auth"]).Trim().ToLower() : "";
+                            string status = ui.ContainsKey("status") ? Convert.ToString(ui["status"]).Trim() : "";
+                            if (auth == "0" || auth == "false" || (auth == "" && status.Length == 0)) err = "Wrong username or password.";
+                            else if (status.Length > 0 && !status.Equals("Active", StringComparison.OrdinalIgnoreCase)) err = "This subscription is " + status + ".";
+                        }
+                        used = h; if (err == null || !err.StartsWith("Could not reach")) break;
+                    }
+                    catch (Exception ex)
+                    {
+                        var wex = ex as System.Net.WebException;
+                        if (wex != null && wex.Response != null)
+                        {
+                            int code = (int)((System.Net.HttpWebResponse)wex.Response).StatusCode;
+                            err = (code == 401 || code == 403 || code == 404 || code >= 500 ? "The server refused this login (HTTP " + code + "). Usually a wrong username/password, an expired account, or the wrong server address." : "The server answered with an error (HTTP " + code + ").");
+                            used = h; break;
+                        }
+                        err = "Could not reach the server (" + h + "): " + ex.Message;
+                    }
                 }
-                catch (Exception ex) { err = "Could not reach the server: " + ex.Message; }
+                host = used;
                 try
                 {
                     BeginInvoke(new Action(() =>
@@ -562,9 +591,11 @@ namespace NextBoost
         }
     }
     // فحص التحديث (نفس فكرة DsMaN): ملف نصي صغير فيه version=... و url=... على رابط أو مسار. التحديث ما يتم إلا لما المستخدم يضغط الزر.
+    static class Prefs { public static bool ShareMode; }
+
     static class Updater
     {
-        public const string Version = "1.3";
+        public const string Version = "1.4";
         public const string DefaultSource = "https://raw.githubusercontent.com/abo5lood10/BuNgaim-TV/main/update.txt";
         public static string Source = "";   // يتبدّل من settings.ini (UpdateUrl): رابط أو مسار ملف
         public static volatile bool Available, Busy; public static string NewVersion = "", DownloadUrl = "", Message = "";
@@ -649,7 +680,7 @@ namespace NextBoost
         [DllImport("user32")] static extern bool ReleaseCapture();
         [DllImport("user32")] static extern IntPtr SendMessage(IntPtr h, int msg, int w, int l);
         Bitmap bgBmp; public Bitmap Bg { get { return bgBmp; } }
-        readonly StatusLine msg = new StatusLine(); const int W = 460, H = 330;
+        readonly StatusLine msg = new StatusLine(); const int W = 460, H = 400;
         public SettingsForm()
         {
             FormBorderStyle = FormBorderStyle.None; StartPosition = FormStartPosition.CenterParent; ShowInTaskbar = false;
@@ -663,10 +694,12 @@ namespace NextBoost
                 T.Card(g, new RectangleF(1, 1, W - 3, H - 3), 20);
                 T.FieldBox(g, new RectangleF(28, 92, W - 56, 44));
                 T.FieldBox(g, new RectangleF(28, 164, W - 56, 44));
+                T.FieldBox(g, new RectangleF(28, 236, W - 56, 44));
             }
-            msg.Bounds = new Rectangle(28, 222, W - 56, 24); msg.Tag = bg; msg.Value = ""; Controls.Add(msg);
-            Controls.Add(new Cmd("Check for updates", delegate { msg.Col = Color.FromArgb(255, 214, 54); msg.Value = "Checking…"; Updater.Check(delegate { try { BeginInvoke(new Action(() => msg.Value = Updater.Message)); } catch { } }); }, false) { Bounds = new Rectangle(28, 268, 170, 40), Tag = bg });
-            Controls.Add(new Cmd("Close", delegate { DialogResult = DialogResult.OK; }, true) { Bounds = new Rectangle(W - 28 - 110, 268, 110, 40), Tag = bg });
+            var tgShare = new Tog("Discord mode", Prefs.ShareMode, null) { Bounds = new Rectangle(W - 44 - 150, 242, 150, 32), Tag = bg }; tgShare.Changed += () => { Prefs.ShareMode = tgShare.On; }; Controls.Add(tgShare);
+            msg.Bounds = new Rectangle(28, 294, W - 56, 24); msg.Tag = bg; msg.Value = ""; Controls.Add(msg);
+            Controls.Add(new Cmd("Check for updates", delegate { msg.Col = Color.FromArgb(255, 214, 54); msg.Value = "Checking…"; Updater.Check(delegate { try { BeginInvoke(new Action(() => msg.Value = Updater.Message)); } catch { } }); }, false) { Bounds = new Rectangle(28, 338, 170, 40), Tag = bg });
+            Controls.Add(new Cmd("Close", delegate { DialogResult = DialogResult.OK; }, true) { Bounds = new Rectangle(W - 28 - 110, 338, 110, 40), Tag = bg });
             MouseDown += delegate(object o, MouseEventArgs e) { if (e.Button == MouseButtons.Left) { ReleaseCapture(); SendMessage(Handle, 0xA1, 2, 0); } };
             Paint += delegate(object o, PaintEventArgs e)
             {
@@ -677,6 +710,7 @@ namespace NextBoost
                 T.Txt(g, "Coming soon", T.F(10f, FontStyle.Bold), Color.FromArgb(255, 214, 54), new RectangleF(W - 44 - 220, 92, 220, 44), StringAlignment.Far);
                 T.Txt(g, "Updates", T.F(11f, FontStyle.Bold), T.Text, new RectangleF(44, 164, 200, 44), StringAlignment.Near);
                 T.Txt(g, "Only when you press the yellow button", T.F(9f), T.Dim, new RectangleF(W - 44 - 260, 164, 260, 44), StringAlignment.Far);
+                T.Txt(g, "Screen share", T.F(11f, FontStyle.Bold), T.Text, new RectangleF(44, 236, 160, 44), StringAlignment.Near);
             };
         }
         protected override bool ProcessCmdKey(ref Message m, Keys k) { if (k == Keys.Escape || k == Keys.Enter) { DialogResult = DialogResult.OK; return true; } return base.ProcessCmdKey(ref m, k); }

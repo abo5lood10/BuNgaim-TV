@@ -225,7 +225,7 @@ namespace NextBoost
             preset = Math.Max(0, Math.Min(Presets.Names.Length - 1, cfg.Int("Preset", 1)));
             BuildUi();
             LoadFavorites(); LoadRecent();
-            Load += (s, e) => { ApplyLayout(); if (!EnsureAccount()) { BeginInvoke(new Action(Close)); return; } LoadChannelsAsync(false); StartUpdateChecks(); };
+            Load += (s, e) => { ApplyLayout(); if (!EnsureAccount()) { BeginInvoke(new Action(Close)); return; } LoadChannelsAsync(false); Prefs.ShareMode = cfg.Int("ShareMode", 0) == 1; StartUpdateChecks(); };
             SizeChanged += (s, e) => { ApplyLayout(); ShaderForVisibility(); }; LocationChanged += (s, e) => SyncVideoWindow();
             // mpv يعيد وضع نافذته لما يبدأ الفيديو، فنثبّتها بمكانها كل نص ثانية
             var syncTimer = new System.Windows.Forms.Timer { Interval = 1000 };
@@ -290,7 +290,7 @@ namespace NextBoost
             btnMax = new WinBtn(1, ToggleMax);
             btnClose = new WinBtn(2, delegate { Close(); });
             btnAccount = new Cmd("Account", ChangeAccount, false);
-            btnSettings = new Cmd("Settings", delegate { using (var sf = new SettingsForm()) sf.ShowDialog(this); }, false);
+            btnSettings = new Cmd("Settings", delegate { using (var sf = new SettingsForm()) sf.ShowDialog(this); cfg.Set("ShareMode", Prefs.ShareMode ? "1" : "0"); cfg.Save(); }, false);
             btnUpdate = new UpdateBtn { Act = DoUpdate }; Controls.Add(btnUpdate);
             Controls.Add(btnMin); Controls.Add(btnMax); Controls.Add(btnClose); Controls.Add(btnAccount); Controls.Add(btnSettings);
             uiControls.AddRange(new Control[] { btnMin, btnMax, btnClose, btnAccount, btnSettings });
@@ -882,7 +882,8 @@ namespace NextBoost
             string url = acct.Get("host", "") + "/live/" + acct.Get("username", "") + "/" + acct.Get("password", "") + "/" + c.Id + ".m3u8";
             pipeName = "nextboost-" + Process.GetCurrentProcess().Id + "-" + (++token);
             var a = new StringBuilder();
-            a.Append("--no-border --auto-window-resize=no --keepaspect-window=no --geometry=640x360+0+0 --title=NextBoostVideo");
+            a.Append("--no-border --auto-window-resize=no --keepaspect-window=no --geometry=640x360+0+0 --title=\"BuNgaim TV - Video\"");
+            if (Prefs.ShareMode) a.Append(" --d3d11-flip=no");   // وضع المشاركة: يخلي التقاط النافذة (ديسكورد/OBS) يشوف الفيديو بدل الشاشة السوداء
             a.Append(" --cursor-autohide=1000 --input-ipc-server=").Append(pipeName);
             a.Append(" --force-media-title=").Append(Q(c.Name));
             string sh = Presets.Shaders[presetIdx]; activeShader = sh != null ? Path.Combine(shaderDir, sh) : null; shaderOff = false;
