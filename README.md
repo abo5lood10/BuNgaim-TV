@@ -13,7 +13,7 @@ Needs only Windows (uses the built-in .NET Framework C# compiler):
 
     powershell -ExecutionPolicy Bypass -File src\build.ps1
 
-This produces `NEXT-Boost.exe` next to `src`. Then put an mpv build in `mpv\` (e.g. shinchiro's Windows builds) with the shaders in `mpv\portable_config\shaders`.
+This produces `BuNgaim TV.exe` next to `src`. Then put an mpv build in `mpv\` (e.g. shinchiro's Windows builds) with the shaders in `mpv\portable_config\shaders`.
 The UI font is not included (licence); the app falls back to Bahnschrift.
 
 ## Privacy

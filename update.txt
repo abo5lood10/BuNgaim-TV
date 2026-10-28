@@ -1,2 +1,2 @@
-version=1.5
+version=1.6
 url=https://github.com/abo5lood10/BuNgaim-TV/releases/latest/download/BuNgaim-TV.exe
