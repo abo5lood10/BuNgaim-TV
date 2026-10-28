@@ -1,5 +1,5 @@
 ﻿// هوية DsMaN "Default" (أخضر داكن زجاجي) — الأرقام منسوخة حرفياً من theme\default theme\reference\DsMaN-theme-code.cs.txt
-// (T، GlassRenderer، NameArt، WinBtn، Cmd) وتمّ تكييفها لـ NEXT Boost.
+// (T، GlassRenderer، NameArt، WinBtn، Cmd) وتمّ تكييفها لـ BuNgaim TV.
 using System;
 using System.Collections.Generic;
 using System.Drawing;
@@ -593,7 +593,7 @@ namespace NextBoost
     // فحص التحديث (نفس فكرة DsMaN): ملف نصي صغير فيه version=... و url=... على رابط أو مسار. التحديث ما يتم إلا لما المستخدم يضغط الزر.
     static class Updater
     {
-        public const string Version = "1.5";
+        public const string Version = "1.6";
         public const string DefaultSource = "https://raw.githubusercontent.com/abo5lood10/BuNgaim-TV/main/update.txt";
         public static string Source = "";   // يتبدّل من settings.ini (UpdateUrl): رابط أو مسار ملف
         public static volatile bool Available, Busy; public static string NewVersion = "", DownloadUrl = "", Message = "";
@@ -740,4 +740,176 @@ namespace NextBoost
             using (var f = new InputBox(title, prompt, value)) return f.ShowDialog(owner) == DialogResult.OK ? f.tb.Text : null;
         }
     }
-}
+
+    // ---------- الفلاتر المخصصة ----------
+    class FilterDef
+    {
+        public string Name; public int[] V; public int[] Def; public bool Builtin;
+        public FilterDef Clone() { return new FilterDef { Name = Name, V = (int[])V.Clone(), Def = Def == null ? null : (int[])Def.Clone(), Builtin = Builtin }; }
+    }
+
+    static class FilterStore
+    {
+        public static readonly string[] Props = { "brightness", "contrast", "gamma", "saturation", "deband-iterations", "deband-threshold", "deband-grain" };
+        public static readonly string[] Labels = { "Brightness", "Contrast", "Gamma", "Saturation", "Banding fix passes", "Banding fix strength", "Grain" };
+        public static readonly int[] Min = { -40, -40, -40, -40, 0, 5, 0 }, Max = { 40, 40, 40, 40, 6, 90, 40 };
+        public static List<FilterDef> Items = new List<FilterDef>(); static string path;
+
+        static FilterDef B(string n, params int[] v) { return new FilterDef { Name = n, V = (int[])v.Clone(), Def = (int[])v.Clone(), Builtin = true }; }
+        public static void Load(string file)
+        {
+            path = file; Items = new List<FilterDef> { B("Off", 0, 0, 0, 0, 2, 35, 8), B("Night", 4, 8, 10, 6, 4, 48, 14), B("Day", -3, 10, -5, 10, 2, 38, 8) };
+            try
+            {
+                if (!System.IO.File.Exists(file)) return;
+                foreach (string line in System.IO.File.ReadAllLines(file, System.Text.Encoding.UTF8))
+                {
+                    string[] p = line.Split('|'); if (p.Length < 2) continue;
+                    string[] vs = p[1].Split(','); if (vs.Length != Props.Length) continue;
+                    int[] v = new int[vs.Length]; bool ok = true; for (int i = 0; i < v.Length; i++) if (!int.TryParse(vs[i], out v[i])) ok = false;
+                    if (!ok) continue;
+                    var ex = Items.Find(f => f.Name.Equals(p[0], StringComparison.OrdinalIgnoreCase));
+                    if (ex != null) { if (ex.Name != "Off") ex.V = v; }
+                    else Items.Add(new FilterDef { Name = p[0], V = v });
+                }
+            }
+            catch { }
+        }
+        public static void Save()
+        {
+            try { System.IO.File.WriteAllLines(path, Items.FindAll(f => f.Name != "Off").ConvertAll(f => f.Name + "|" + string.Join(",", Array.ConvertAll(f.V, n => n.ToString()))).ToArray(), new System.Text.UTF8Encoding(false)); } catch { }
+        }
+        public static string UniqueName(string n, FilterDef self)
+        {
+            n = (n ?? "").Trim().Replace("|", " "); if (n.Length == 0) n = "My filter"; string b = n; int k = 2;
+            while (Items.Exists(f => f != self && f.Name.Equals(n, StringComparison.OrdinalIgnoreCase))) n = b + " " + (k++);
+            return n;
+        }
+    }
+
+    // شريط قيمة بنمط الهوية (للمحرر)
+    class ParamSlider : VC
+    {
+        public int Min, Max, Value; public string Label; public event Action Changed; bool drag;
+        public ParamSlider(string label, int min, int max, int v) { Label = label; Min = min; Max = max; Value = v; }
+        float X0 { get { return 8; } } float X1 { get { return Width - 8; } }
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            Graphics g = e.Graphics; T.Setup(g);
+            T.Txt(g, Label, T.F(9.5f, FontStyle.Bold), T.Text, new RectangleF(2, 0, Width / 2f, 20), StringAlignment.Near);
+            T.Txt(g, (Value > 0 && Min < 0 ? "+" : "") + Value, T.F(9.5f, FontStyle.Bold), Color.FromArgb(255, 214, 54), new RectangleF(Width / 2f, 0, Width / 2f - 2, 20), StringAlignment.Far);
+            float cy = 31; float frac = (Value - Min) / (float)(Max - Min), px = X0 + (X1 - X0) * frac;
+            using (Brush b = new SolidBrush(Color.FromArgb(70, 255, 255, 255))) g.FillRectangle(b, X0, cy - 2, X1 - X0, 4);
+            if (Min < 0) { float zx = X0 + (X1 - X0) * (-Min / (float)(Max - Min)); using (Brush b = new SolidBrush(Color.FromArgb(120, 255, 255, 255))) g.FillRectangle(b, zx - 1, cy - 6, 2, 12); }
+            using (Brush b = new SolidBrush(Color.FromArgb(52, 199, 89))) { float zx = Min < 0 ? X0 + (X1 - X0) * (-Min / (float)(Max - Min)) : X0; g.FillRectangle(b, Math.Min(zx, px), cy - 2, Math.Abs(px - zx), 4); }
+            using (Brush b = new SolidBrush(Color.White)) g.FillEllipse(b, px - 7, cy - 7, 14, 14);
+        }
+        void SetFrom(int x) { float f = (x - X0) / (X1 - X0); f = Math.Max(0, Math.Min(1, f)); int v = (int)Math.Round(Min + f * (Max - Min)); if (v != Value) { Value = v; Invalidate(); if (Changed != null) Changed(); } }
+        protected override void OnMouseDown(MouseEventArgs e) { drag = true; Capture = true; SetFrom(e.X); }
+        protected override void OnMouseMove(MouseEventArgs e) { if (drag) SetFrom(e.X); base.OnMouseMove(e); }
+        protected override void OnMouseUp(MouseEventArgs e) { drag = false; Capture = false; }
+    }
+
+    // محرر الفلتر: اسم + قيم، ويطبّق لحظياً على الفيديو أثناء السحب
+    class FilterEditor : Form, IBackHost
+    {
+        [DllImport("user32")] static extern bool ReleaseCapture();
+        [DllImport("user32")] static extern IntPtr SendMessage(IntPtr h, int msg, int w, int l);
+        Bitmap bgBmp; public Bitmap Bg { get { return bgBmp; } }
+        public bool Deleted; public FilterDef Work; readonly TextBox tb = new TextBox(); readonly List<ParamSlider> sl = new List<ParamSlider>();
+        const int W = 520, H = 580;
+        public FilterEditor(FilterDef work, bool isNew, Action<int[]> preview)
+        {
+            Work = work;
+            FormBorderStyle = FormBorderStyle.None; StartPosition = FormStartPosition.CenterParent; ShowInTaskbar = false;
+            ClientSize = new Size(W, H); BackColor = T.WindowBack; DoubleBuffered = true;
+            Region = new Region(T.RR(new RectangleF(0, 0, Width, Height), 20));
+            Bitmap bg = bgBmp = new Bitmap(W, H);
+            using (Graphics g = Graphics.FromImage(bg))
+            {
+                T.Setup(g);
+                using (LinearGradientBrush b = new LinearGradientBrush(new Rectangle(0, 0, W, H), Color.FromArgb(52, 82, 64), Color.FromArgb(15, 33, 22), 62f)) g.FillRectangle(b, 0, 0, W, H);
+                T.Card(g, new RectangleF(1, 1, W - 3, H - 3), 20);
+                T.FieldBox(g, new RectangleF(28, 84, W - 56, 44));
+            }
+            tb.BorderStyle = BorderStyle.None; tb.BackColor = T.Field; tb.ForeColor = T.Text; tb.Font = T.F(11f); tb.Bounds = new Rectangle(44, 96, W - 88, 24); tb.Text = work.Name; tb.MaxLength = 28;
+            tb.ReadOnly = work.Name == "Night" || work.Name == "Day"; tb.GotFocus += (s, e) => tb.SelectAll(); Controls.Add(tb);
+            for (int i = 0; i < FilterStore.Props.Length; i++)
+            {
+                int k = i; var s = new ParamSlider(FilterStore.Labels[i], FilterStore.Min[i], FilterStore.Max[i], work.V[i]) { Bounds = new Rectangle(28, 146 + i * 46, W - 56, 42), Tag = bg };
+                s.Changed += () => { work.V[k] = s.Value; if (preview != null) preview(work.V); };
+                sl.Add(s); Controls.Add(s);
+            }
+            int by = H - 62;
+            Controls.Add(new Cmd("Save", delegate { Work.Name = work.Builtin ? work.Name : FilterStore.UniqueName(tb.Text, isNew ? null : work); DialogResult = DialogResult.OK; }, true) { Bounds = new Rectangle(W - 28 - 110, by, 110, 40), Tag = bg });
+            Controls.Add(new Cmd("Cancel", delegate { DialogResult = DialogResult.Cancel; }, false) { Bounds = new Rectangle(W - 28 - 110 - 8 - 100, by, 100, 40), Tag = bg });
+            if (work.Builtin && work.Name != "Off" && work.Def != null)
+                Controls.Add(new Cmd("Reset", delegate { for (int i = 0; i < work.V.Length; i++) { work.V[i] = work.Def[i]; sl[i].Value = work.V[i]; sl[i].Invalidate(); } if (preview != null) preview(work.V); }, false) { Bounds = new Rectangle(28, by, 100, 40), Tag = bg });
+            if (!work.Builtin && !isNew)
+                Controls.Add(new Cmd("Delete", delegate { Deleted = true; DialogResult = DialogResult.OK; }, false) { Bounds = new Rectangle(28, by, 100, 40), LabelColor = Color.FromArgb(255, 150, 150), Tag = bg });
+            MouseDown += delegate(object o, MouseEventArgs e) { if (e.Button == MouseButtons.Left && e.Y < 70) { ReleaseCapture(); SendMessage(Handle, 0xA1, 2, 0); } };
+            Paint += delegate(object o, PaintEventArgs e)
+            {
+                e.Graphics.DrawImageUnscaled(bg, 0, 0); T.Setup(e.Graphics);
+                T.Txt(e.Graphics, isNew ? "Create filter" : "Edit filter", T.F(16, FontStyle.Bold), T.Text, new RectangleF(28, 16, W - 56, 32), StringAlignment.Near);
+                T.Txt(e.Graphics, "Changes show live on the video while you drag.", T.F(9.5f), T.Dim, new RectangleF(28, 48, W - 56, 22), StringAlignment.Near);
+            };
+        }
+        protected override bool ProcessCmdKey(ref Message m, Keys k) { if (k == Keys.Escape) { DialogResult = DialogResult.Cancel; return true; } return base.ProcessCmdKey(ref m, k); }
+    }
+
+    // قائمة الفلاتر المنبثقة: صف لكل فلتر (اضغط للاختيار) وترس على اليمين للتعديل، وآخرها "Create filter"
+    class FilterPopup : Form
+    {
+        readonly List<FilterDef> items; int cur, hover = -1; bool hoverGear; readonly Action<int> onPick, onEdit; readonly Action onCreate; readonly Control owner; const int RH = 38;
+        public FilterPopup(Control owner, List<FilterDef> items, int cur, Action<int> onPick, Action<int> onEdit, Action onCreate)
+        {
+            this.owner = owner; this.items = items; this.cur = cur; this.onPick = onPick; this.onEdit = onEdit; this.onCreate = onCreate;
+            FormBorderStyle = FormBorderStyle.None; ShowInTaskbar = false; StartPosition = FormStartPosition.Manual; TopMost = true; DoubleBuffered = true; BackColor = T.WindowBack;
+            Deactivate += (s, e) => Close();
+        }
+        public void ShowAt(Point screen, int width)
+        {
+            ClientSize = new Size(Math.Max(width, 300), (items.Count + 1) * RH + 16); Location = screen;
+            Region = new Region(T.RR(new RectangleF(0, 0, Width, Height), 14)); Show();
+        }
+        int RowAt(int y) { int r = (y - 8) / RH; return (y < 8 || r > items.Count) ? -1 : r; }
+        protected override void OnMouseMove(MouseEventArgs e) { int r = RowAt(e.Y); bool gz = e.X > Width - 44 && r >= 0 && r < items.Count && items[r].Name != "Off"; if (r != hover || gz != hoverGear) { hover = r; hoverGear = gz; Invalidate(); } }
+        protected override void OnMouseLeave(EventArgs e) { hover = -1; Invalidate(); }
+        protected override void OnMouseDown(MouseEventArgs e)
+        {
+            int r = RowAt(e.Y); if (r < 0) return;
+            Action act;
+            if (r == items.Count) act = onCreate;
+            else if (e.X > Width - 44 && items[r].Name != "Off") act = () => onEdit(r);
+            else act = () => onPick(r);
+            owner.BeginInvoke(act); Close();
+        }
+        static void Gear(Graphics g, float cx, float cy, float r, Color c)
+        {
+            using (Pen p = new Pen(c, 1.8f))
+            {
+                g.DrawEllipse(p, cx - r * 0.5f, cy - r * 0.5f, r, r);
+                for (int i = 0; i < 8; i++) { double a = Math.PI / 4 * i; g.DrawLine(p, (float)(cx + Math.Cos(a) * r * 0.62), (float)(cy + Math.Sin(a) * r * 0.62), (float)(cx + Math.Cos(a) * r * 0.95), (float)(cy + Math.Sin(a) * r * 0.95)); }
+            }
+        }
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            Graphics g = e.Graphics; T.Setup(g);
+            using (LinearGradientBrush b = new LinearGradientBrush(new Rectangle(0, 0, Width, Height), Color.FromArgb(46, 74, 58), Color.FromArgb(14, 30, 20), 70f)) g.FillRectangle(b, 0, 0, Width, Height);
+            using (Pen p = new Pen(Color.FromArgb(110, 255, 255, 255))) using (GraphicsPath gp = T.RR(new RectangleF(0.5f, 0.5f, Width - 2, Height - 2), 14)) g.DrawPath(p, gp);
+            for (int i = 0; i <= items.Count; i++)
+            {
+                RectangleF row = new RectangleF(8, 8 + i * RH, Width - 16, RH - 2);
+                if (i == hover) using (GraphicsPath gp = T.RR(row, 9)) using (Brush b = new SolidBrush(Color.FromArgb(i == items.Count ? 70 : 50, 52, 199, 89))) g.FillPath(b, gp);
+                if (i == items.Count)
+                {
+                    T.Txt(g, "+  Create filter…", T.F(10f, FontStyle.Bold), Color.FromArgb(255, 214, 54), new RectangleF(row.X + 12, row.Y, row.Width - 20, row.Height), StringAlignment.Near);
+                    continue;
+                }
+                if (i == cur) using (Brush b = new SolidBrush(Color.FromArgb(52, 199, 89))) g.FillEllipse(b, row.X + 10, row.Y + row.Height / 2f - 4, 8, 8);
+                T.Txt(g, items[i].Name, T.F(10f, i == cur ? FontStyle.Bold : FontStyle.Regular), T.Text, new RectangleF(row.X + 28, row.Y, row.Width - 80, row.Height), StringAlignment.Near);
+                if (items[i].Name != "Off") Gear(g, row.Right - 20, row.Y + row.Height / 2f, 8f, (i == hover && hoverGear) ? Color.FromArgb(255, 214, 54) : T.Dim);
+            }
+        }
+    }}

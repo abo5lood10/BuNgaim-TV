@@ -1,4 +1,4 @@
-﻿// NEXT Boost — مشغّل قنوات IPTV محسّن (C#، يشتغل بدون تثبيت) بهوية DsMaN (أخضر داكن زجاجي)
+﻿// BuNgaim TV — مشغّل قنوات IPTV محسّن (C#، يشتغل بدون تثبيت) بهوية DsMaN (أخضر داكن زجاجي)
 // الفيديو (mpv) يشتغل داخل نافذة البرنامج نفسها: تكبّرها وتصغّرها وتنقلها والقائمة قدامك.
 // يستخدم mpv + فلاتر الذكاء الاصطناعي (FSRCNNX / ArtCNN) من GitHub ويستغل كرت الشاشة، ويخفّف الفلتر تلقائياً لو حصل تقطيع.
 using System;
@@ -206,7 +206,7 @@ namespace NextBoost
         readonly ListView lv = new ListView();
         readonly Panel videoPanel = new Panel { BackColor = Color.Black, Visible = true };
         WinBtn btnMin, btnMax, btnClose;
-        Cmd cmdCat, cmdPreset, btnPlay, btnStop, btnRefresh, btnFull, btnMute; VolSlide vol; MpvIpc curIpc; bool muted;
+        Cmd cmdCat, cmdPreset, cmdFilter, btnPlay, btnStop, btnRefresh, btnFull, btnMute; VolSlide vol; MpvIpc curIpc; bool muted;
         Tog tgFav, tgAuto; Cmd btnAccount, btnSettings; DaysBadge btnDays; VerBtn verBtn; int nameEndX = 380; readonly List<Tog> chips = new List<Tog>();
         StatusLine status, count, hint; VScroll vscroll;
         readonly List<Control> uiControls = new List<Control>();
@@ -253,7 +253,7 @@ namespace NextBoost
             Text = "BuNgaim TV";
             FormBorderStyle = FormBorderStyle.None; var wa0 = (argScreen >= 0 && argScreen < Screen.AllScreens.Length ? Screen.AllScreens[argScreen] : Screen.PrimaryScreen).WorkingArea;
             int iw0 = Math.Min(1500, wa0.Width - 60), ih0 = Math.Min(840, wa0.Height - 60);
-            ClientSize = new Size(iw0, ih0); MinimumSize = new Size(1040, 620);
+            ClientSize = new Size(iw0, ih0); MinimumSize = new Size(1040, 720);
             T.W = iw0; T.H = ih0;
             if (argScreen >= 0 && argScreen < Screen.AllScreens.Length)
             { StartPosition = FormStartPosition.Manual; var wa = Screen.AllScreens[argScreen].WorkingArea; Location = new Point(wa.X + (wa.Width - Width) / 2, wa.Y + (wa.Height - Height) / 2); }
@@ -390,6 +390,8 @@ namespace NextBoost
             lv.KeyDown += (s, e) => { if (e.KeyCode == Keys.Enter) { PlaySelected(); e.SuppressKeyPress = true; } else if (e.KeyCode == Keys.F) ToggleFav(); };
 
             cmdPreset = new Cmd("", ShowPresetMenu, false) { Chev = true };
+            cmdFilter = new Cmd("", ShowFilterMenu, false) { Chev = true }; FilterStore.Load(Path.Combine(appDir, "filters.txt"));
+            { string fv = cfg.Get("Filter", "Off"); int fn; filterIdx = int.TryParse(fv, out fn) ? Math.Max(0, Math.Min(FilterStore.Items.Count - 1, fn)) : Math.Max(0, FilterStore.Items.FindIndex(x => x.Name.Equals(fv, StringComparison.OrdinalIgnoreCase))); }
             tgAuto = new Tog("Auto step-down", cfg.Int("Auto", 1) == 1, null);
             btnPlay = new Cmd("Play", PlaySelected, true) { Glyph = "play" };
             btnStop = new Cmd("Stop", delegate { StopMpv(true); }, false) { Glyph = "stop", LabelColor = Color.FromArgb(255, 150, 150) };
@@ -408,7 +410,7 @@ namespace NextBoost
             vol = new VolSlide();
             vol.Changed += v => { if (curIpc != null) curIpc.Send("{\"command\":[\"set_property\",\"volume\"," + ((int)v) + "]}"); };
 
-            foreach (Control c in new Control[] { tbSearch, cmdCat, tgFav, hint, count, lv, cmdPreset, tgAuto, btnPlay, btnStop, btnRefresh, status, btnFull, btnMute, vol, vscroll }) { Controls.Add(c); uiControls.Add(c); }
+            foreach (Control c in new Control[] { tbSearch, cmdCat, tgFav, hint, count, lv, cmdPreset, cmdFilter, tgAuto, btnPlay, btnStop, btnRefresh, status, btnFull, btnMute, vol, vscroll }) { Controls.Add(c); uiControls.Add(c); }
             foreach (var ch in chips) { Controls.Add(ch); uiControls.Add(ch); }
             videoPanel.Paint += (s, e) =>
             {
@@ -616,7 +618,7 @@ namespace NextBoost
             if (min && !shaderOff) { shaderOff = true; ipc.Send("{\"command\":[\"change-list\",\"glsl-shaders\",\"clr\",\"\"]}"); }
             else if (!min && shaderOff) { shaderOff = false; if (activeShader != null) ipc.Send("{\"command\":[\"change-list\",\"glsl-shaders\",\"set\"," + new JavaScriptSerializer().Serialize(activeShader) + "]}"); }
         }
-        const int VideoRadius = 18;
+        const int VideoRadius = 12;
         [DllImport("gdi32.dll")] static extern IntPtr CreateRoundRectRgn(int l, int t, int r, int b, int w, int h);
         [DllImport("user32.dll")] static extern int SetWindowRgn(IntPtr h, IntPtr rgn, bool redraw);
         // نافذة mpv مستطيلة، فنقصّها بمنطقة بزوايا مدوّرة (بخيط جانبي عشان ما نوقف الواجهة)
@@ -647,7 +649,7 @@ namespace NextBoost
                 Region = WindowState == FormWindowState.Normal ? new Region(T.RR(new RectangleF(0, 0, W, H), 22)) : null;
                 btnMin.Bounds = R(W - 10 - 38 * 3 - 12, 6, 38, 32); btnAccount.Bounds = R(btnMin.Left - 10 - 96, 6, 96, 32); btnSettings.Bounds = R(btnAccount.Left - 8 - 96, 6, 96, 32); btnMax.Bounds = R(W - 10 - 38 * 2 - 6, 6, 38, 32); btnClose.Bounds = R(W - 10 - 38, 6, 38, 32);
 
-                int x0 = 16, yTop = 62, barH = 38;
+                int x0 = 16, yTop = 128, barH = 38;
                 int lw = Math.Max(390, Math.Min(480, W * 34 / 100));
                 bool wide = lw >= 700; int y = yTop; int searchH;
                 int cx = x0 + 14, iw = lw - 28;
@@ -682,14 +684,14 @@ namespace NextBoost
                 cards.Add(new RectangleF(x0, ctlTop, lw, ctlH));
                 if (wide)
                 {
-                    cmdPreset.Bounds = R(cx, ctlTop + 12, iw - 158, 40); tgAuto.Bounds = R(cx + iw - 150, ctlTop + 12, 150, 40);
+                    int pw = (iw - 158 - 8) * 56 / 100; cmdPreset.Bounds = R(cx, ctlTop + 12, pw, 40); cmdFilter.Bounds = R(cx + pw + 8, ctlTop + 12, iw - 158 - 8 - pw - 8, 40); tgAuto.Bounds = R(cx + iw - 150, ctlTop + 12, 150, 40);
                     int by = ctlTop + 62; int bx = cx;
                     btnPlay.Bounds = R(bx, by, 220, 40); bx += 230; btnStop.Bounds = R(bx, by, 120, 40); bx += 130;
                     btnRefresh.Bounds = R(bx, by, cx + iw - bx, 40);
                 }
                 else
                 {
-                    cmdPreset.Bounds = R(cx, ctlTop + 10, iw, 36);
+                    int pw2 = (iw - 8) * 54 / 100; cmdPreset.Bounds = R(cx, ctlTop + 10, pw2, 36); cmdFilter.Bounds = R(cx + pw2 + 8, ctlTop + 10, iw - pw2 - 8, 36);
                     int tw = (iw - 8) / 2;
                     tgAuto.Bounds = R(cx, ctlTop + 54, tw, 34); btnRefresh.Bounds = R(cx + tw + 8, ctlTop + 54, iw - tw - 8, 34);
                     int p3 = (iw - 8) * 58 / 100;
@@ -705,12 +707,13 @@ namespace NextBoost
 
                 {
                     int vx = x0 + lw + 12, vy = yTop, vw = W - vx - 16, vh = H - barH - 6 - vy;
-                    videoPanel.SetBounds(vx, vy, Math.Max(100, vw), Math.Max(100, vh)); videoPanel.Region = new Region(T.RR(new RectangleF(0, 0, videoPanel.Width, videoPanel.Height), VideoRadius));
+                    cards.Add(new RectangleF(vx, vy, Math.Max(120, vw), Math.Max(120, vh))); int vpad = 10;   // إطار زجاجي حول الفيديو مثل بطاقات القنوات
+                    videoPanel.SetBounds(vx + vpad, vy + vpad, Math.Max(100, vw - 2 * vpad), Math.Max(100, vh - 2 * vpad)); videoPanel.Region = new Region(T.RR(new RectangleF(0, 0, videoPanel.Width, videoPanel.Height), VideoRadius));
                     videoPanel.Visible = true; videoPanel.BringToFront(); videoPanel.Invalidate();
                 }
 
                 T.StaticBg = BuildBackground();
-                btnDays.Bounds = R(nameEndX, 14, 150, 32); verBtn.Bounds = R(nameEndX + 162, 14, 150, 32);
+                int rightEdge = ClientSize.Width - 16; btnDays.Bounds = R(rightEdge - 150, 60, 150, 32); verBtn.Bounds = R(rightEdge - 150 - 8 - 150, 60, 150, 32);   // أقصى اليمين
                 foreach (var c in uiControls) c.Invalidate(); Invalidate();
             }
             finally { layouting = false; SyncVideoWindow(); }
@@ -723,8 +726,13 @@ namespace NextBoost
             {
                 T.Setup(g); g.DrawImageUnscaled(T.Gradient(), 0, 0);
                 if (videoFull && playing) return b;
-                if (appIcon != null) { g.InterpolationMode = InterpolationMode.HighQualityBicubic; using (Bitmap ib = appIcon.ToBitmap()) g.DrawImage(ib, new Rectangle(14, 8, 24, 24)); }
-                float w = NameArt.DrawText(g, 46, 5, 40); nameEndX = (int)(46 + w + 12);
+                g.InterpolationMode = InterpolationMode.HighQualityBicubic;
+                using (Stream rs = System.Reflection.Assembly.GetExecutingAssembly().GetManifestResourceStream("icon.png"))
+                {
+                    if (rs != null) using (Bitmap ib = new Bitmap(rs)) g.DrawImage(ib, new Rectangle(14, 0, 128, 128));
+                    else if (appIcon != null) using (Bitmap ib = appIcon.ToBitmap()) g.DrawImage(ib, new Rectangle(30, 30, 64, 64));
+                }
+                float w = NameArt.DrawText(g, 152, 40, 44); nameEndX = (int)(152 + w + 14);
                                 foreach (var c in cards) T.Card(g, c, 18);
                 foreach (var f in fields) T.FieldBox(g, f);
                 if (!videoFrame.IsEmpty)
@@ -756,6 +764,7 @@ namespace NextBoost
         void UpdateButtons()
         {
             cmdPreset.Text2 = "Quality:  " + Presets.Names[preset]; cmdPreset.Invalidate();
+            { string fn = FilterStore.Items[filterIdx].Name; cmdFilter.Text2 = "Filter:  " + (fn.Length > 14 ? fn.Substring(0, 13) + "…" : fn); } cmdFilter.Invalidate();
         }
 
         void ShowPresetMenu()
@@ -765,7 +774,44 @@ namespace NextBoost
             m.Show(cmdPreset, new Point(0, cmdPreset.Height + 2));
         }
 
-        void SaveSettings() { cfg.Set("Preset", preset.ToString()); cfg.Set("Auto", tgAuto.On ? "1" : "0"); cfg.Save(); }
+        // ---------- فلاتر الصورة: ليل / نهار (تنطبق لحظياً على mpv عن طريق set_property) ----------
+        int filterIdx;
+        void ApplyValues(MpvIpc ip, int[] v)
+        {
+            if (ip == null) return;
+            for (int i = 0; i < FilterStore.Props.Length; i++) ip.Send("{\"command\":[\"set_property\",\"" + FilterStore.Props[i] + "\"," + v[i] + "]}");
+        }
+        void ApplyFilter(MpvIpc ip) { if (ip == null) return; ApplyValues(ip, FilterStore.Items[filterIdx].V); Log.Write("filter applied: " + FilterStore.Items[filterIdx].Name); }
+
+        void ShowFilterMenu()
+        {
+            var pop = new FilterPopup(this, FilterStore.Items, filterIdx,
+                k => { filterIdx = k; UpdateButtons(); SaveSettings(); ApplyFilter(curIpc); },
+                k => EditFilter(FilterStore.Items[k], false),
+                () => { var nf = new FilterDef { Name = "My filter", V = (int[])FilterStore.Items[filterIdx].V.Clone() }; if (filterIdx == 0) nf.V = new[] { 0, 0, 0, 0, 2, 35, 8 }; EditFilter(nf, true); });
+            pop.ShowAt(cmdFilter.PointToScreen(new Point(0, cmdFilter.Height + 2)), Math.Max(cmdFilter.Width, 300));
+        }
+
+        void EditFilter(FilterDef def, bool isNew)
+        {
+            string activeName = FilterStore.Items[filterIdx].Name;
+            var work = def.Clone();
+            using (var ed = new FilterEditor(work, isNew, v => ApplyValues(curIpc, v)))
+            {
+                var r = ed.ShowDialog(this);
+                if (r == DialogResult.OK && ed.Deleted) { FilterStore.Items.Remove(def); Log.Write("filter deleted: " + def.Name); if (activeName == def.Name) activeName = "Off"; }
+                else if (r == DialogResult.OK)
+                {
+                    string old = def.Name; def.Name = work.Name; def.V = (int[])work.V.Clone();
+                    if (isNew) { FilterStore.Items.Add(def); activeName = def.Name; Log.Write("filter created: " + def.Name); }
+                    else { Log.Write("filter edited: " + def.Name); if (activeName == old) activeName = def.Name; }
+                }
+                FilterStore.Save();
+                filterIdx = Math.Max(0, FilterStore.Items.FindIndex(x => x.Name == activeName));
+                UpdateButtons(); SaveSettings(); ApplyFilter(curIpc);   // يرجّع الفلتر المختار (يلغي المعاينة لو ضغطت Cancel)
+            }
+        }
+        void SaveSettings() { cfg.Set("Filter", FilterStore.Items[filterIdx].Name); cfg.Set("Preset", preset.ToString()); cfg.Set("Auto", tgAuto.On ? "1" : "0"); cfg.Save(); }
         void SetStatus(string s) { if (IsHandleCreated && !IsDisposed) BeginInvoke(new Action(() => { status.Value = s; })); }
 
         // ---------- القنوات ----------
@@ -1085,6 +1131,7 @@ namespace NextBoost
             ipc.Send("{\"command\":[\"observe_property\",1,\"fullscreen\"]}");
             ipc.Send("{\"command\":[\"observe_property\",2,\"volume\"]}");
             ipc.Send("{\"command\":[\"observe_property\",3,\"mute\"]}");
+            ApplyFilter(ipc);
             var hist = new Queue<KeyValuePair<DateTime, long>>(); DateTime warm = DateTime.Now.AddSeconds(14); string gpu = "";
             DateTime lastGpu = DateTime.MinValue; string vinfo = ""; int cur = startPreset; bool infoDone = false;
             try

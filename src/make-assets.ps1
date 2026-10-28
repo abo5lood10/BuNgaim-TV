@@ -1,8 +1,8 @@
-﻿# يولّد أصول الهوية لبرنامج NEXT Boost (مطابقة لهوية DsMaN — theme\default theme):
+﻿# يولّد أصول الهوية لبرنامج BuNgaim TV (مطابقة لهوية DsMaN — theme\default theme):
 #   NextBoost.ico  أيقونة: مربع مدوّر بتدرّج أخضر قطري + رمز التشغيل بالأخضر الغامق + نجمة صفراء
 #   name.bin       اسم البرنامج بخط الكرتون (Snap ITC) كمخطط مرسوم (نقاط + أنواع)، نفس صيغة name.bin في DsMaN
 # خط Snap ITC لازم يكون منزّل على الجهاز اللي يشغّل هذا السكربت. ملف الخط نفسه لا يُنسخ؛ فقط مخطط الاسم.
-param([string]$Text = 'NEXT Boost')
+param([string]$Text = 'BuNgaim TV')
 Add-Type -AssemblyName System.Drawing
 $src = $PSScriptRoot
 
