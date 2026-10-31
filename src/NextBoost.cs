@@ -129,6 +129,40 @@ namespace NextBoost
         public void Save() { try { File.WriteAllLines(path, d.Select(kv => kv.Key + "=" + kv.Value).ToArray(), new UTF8Encoding(false)); } catch { } }
     }
 
+    // حساب محفوظ في القايمة: اسم اختياري + بيانات الاشتراك
+    class SavedAccount { public string Name, Host, User, Pass; }
+
+    // ملف الحسابات: سطر لكل حساب بحقول مفصولة بتاب. نهرب بس المحارف اللي تكسر السطر (% والتاب وسطر جديد)، والباقي (عربي ومسافات ورموز) يبقى مقروء
+    static class AccountStore
+    {
+        static string Esc(string s) { return (s ?? "").Replace("%", "%25").Replace("\t", "%09").Replace("\r", "%0D").Replace("\n", "%0A"); }
+        static string Unesc(string s) { return s.Replace("%0A", "\n").Replace("%0D", "\r").Replace("%09", "\t").Replace("%25", "%"); }
+
+        public static List<SavedAccount> Load(string path)
+        {
+            var list = new List<SavedAccount>();
+            if (!File.Exists(path)) return list;
+            try
+            {
+                foreach (string line in File.ReadAllLines(path, Encoding.UTF8))
+                {
+                    string[] f = line.Split('\t'); if (f.Length < 4) continue;
+                    list.Add(new SavedAccount { Name = Unesc(f[0]), Host = Unesc(f[1]), User = Unesc(f[2]), Pass = Unesc(f[3]) });
+                }
+            }
+            catch { }
+            return list;
+        }
+        public static void Save(string path, List<SavedAccount> list)
+        {
+            try
+            {
+                File.WriteAllLines(path, list.Select(a => Esc(a.Name) + "\t" + Esc(a.Host) + "\t" + Esc(a.User) + "\t" + Esc(a.Pass)).ToArray(), new UTF8Encoding(false));
+            }
+            catch { }
+        }
+    }
+
     // مستويات التحسين، من الأقوى للأخف (التخفيض التلقائي يمشي بهذا الترتيب)
     static class Presets
     {
@@ -196,7 +230,8 @@ namespace NextBoost
     }
     class MainForm : Form, IBackHost
     {
-        readonly string appDir, mpvExe, shaderDir, cachePath, favPath, lastPath, recentPath;
+        readonly string appDir, mpvExe, shaderDir, accountsPath; string cachePath, favPath, lastPath, recentPath;
+        List<SavedAccount> accounts = new List<SavedAccount>();
         readonly Ini cfg; readonly Ini acct;
         List<Channel> all = new List<Channel>(); List<string> cats = new List<string>(); List<string> catOrder = new List<string>();
         List<Channel> view = new List<Channel>();
@@ -234,6 +269,7 @@ namespace NextBoost
             favPath = Path.Combine(appDir, "favorites.txt");
             lastPath = Path.Combine(appDir, "last-channel.txt");
             recentPath = Path.Combine(appDir, "recent.txt");
+            accountsPath = Path.Combine(appDir, "accounts.txt");
             Log.Init(appDir); Log.Write("start v" + Updater.Version + "  os=" + Environment.OSVersion + "  exe=" + Path.GetFileName(Application.ExecutablePath));
             cfg = new Ini(Path.Combine(appDir, "settings.ini"));
             acct = new Ini(Path.Combine(appDir, "account.ini"));
@@ -263,7 +299,7 @@ namespace NextBoost
 
             preset = Math.Max(0, Math.Min(Presets.Names.Length - 1, cfg.Int("Preset", 1)));
             BuildUi();
-            LoadFavorites(); LoadRecent();
+            LoadAccounts();
             Load += (s, e) => { ApplyLayout(); if (!EnsureAccount()) { BeginInvoke(new Action(Close)); return; } LoadChannelsAsync(false); StartUpdateChecks(); };
             SizeChanged += (s, e) => { ApplyLayout(); ShaderForVisibility(); }; LocationChanged += (s, e) => SyncVideoWindow();
             // mpv يعيد وضع نافذته لما يبدأ الفيديو، فنثبّتها بمكانها كل نص ثانية
@@ -335,7 +371,7 @@ namespace NextBoost
             btnMin = new WinBtn(0, delegate { WindowState = FormWindowState.Minimized; });
             btnMax = new WinBtn(1, ToggleMax);
             btnClose = new WinBtn(2, delegate { Close(); });
-            btnAccount = new Cmd("Account", ChangeAccount, false);
+            btnAccount = new Cmd("Account", ShowAccounts, false);
             btnSettings = new Cmd("Settings", ShowSettingsMenu, false);
             verBtn = new VerBtn { Act = DoUpdate, Visible = false }; btnDays = new DaysBadge { Text2 = "…" };
             Controls.Add(verBtn); Controls.Add(btnDays); uiControls.Add(btnDays);
@@ -571,42 +607,147 @@ namespace NextBoost
         // ---------- الحساب: كل شخص يدخل اشتراكه الخاص (ما فيه حساب داخل البرنامج) ----------
         bool AccountComplete() { return acct.Get("host", "") != "" && acct.Get("username", "") != "" && acct.Get("password", "") != ""; }
 
+        // أول تشغيل: نقرأ قايمة الحسابات. الحساب القديم (account.ini) لو ما له قايمة، يصير أول حساب فيها وتنتقل ملفاته لمجلده
+        void LoadAccounts()
+        {
+            accounts = AccountStore.Load(accountsPath);
+            if (accounts.Count == 0 && AccountComplete())
+            {
+                accounts.Add(new SavedAccount { Name = acct.Get("username", ""), Host = acct.Get("host", ""), User = acct.Get("username", ""), Pass = acct.Get("password", "") });
+                AccountStore.Save(accountsPath, accounts);
+                MoveOldData(AccountDir());
+            }
+            if (AccountComplete()) ApplyAccountPaths();
+        }
+
+        // كل حساب له مجلد فيه قنواته ومفضلته وسجله (الاسم يعتمد على الرابط واسم المستخدم، فتغيير كلمة السر ما يضيّع شي)
+        string DirOf(string host, string user) { return Path.Combine(appDir, "accounts", AccountKey(host, user)); }
+        string AccountDir() { return DirOf(acct.Get("host", ""), acct.Get("username", "")); }
+        static string AccountKey(string host, string user)
+        {
+            byte[] h = System.Security.Cryptography.SHA1.Create().ComputeHash(Encoding.UTF8.GetBytes(host.ToLowerInvariant() + "|" + user.ToLowerInvariant()));
+            return BitConverter.ToString(h, 0, 8).Replace("-", "").ToLowerInvariant();
+        }
+
+        void MoveOldData(string dir)
+        {
+            Directory.CreateDirectory(dir);
+            foreach (string name in new[] { "channels-cache.json", "favorites.txt", "recent.txt", "last-channel.txt" })
+            {
+                string src = Path.Combine(appDir, name), dst = Path.Combine(dir, name);
+                try { if (File.Exists(src) && !File.Exists(dst)) File.Move(src, dst); } catch { }
+            }
+        }
+
+        // يربط ملفات الحساب الحالي بمجلده، ويحمّل مفضلته وسجله
+        void ApplyAccountPaths()
+        {
+            string dir = AccountDir(); Directory.CreateDirectory(dir);
+            cachePath = Path.Combine(dir, "channels-cache.json"); favPath = Path.Combine(dir, "favorites.txt");
+            lastPath = Path.Combine(dir, "last-channel.txt"); recentPath = Path.Combine(dir, "recent.txt");
+            fav.Clear(); recent.Clear(); LoadFavorites(); LoadRecent();
+        }
+
+        int FindAccount(string host, string user)
+        {
+            for (int i = 0; i < accounts.Count; i++)
+                if (accounts[i].Host.Equals(host, StringComparison.OrdinalIgnoreCase) && accounts[i].User.Equals(user, StringComparison.OrdinalIgnoreCase)) return i;
+            return -1;
+        }
+        int ActiveIndex() { return FindAccount(acct.Get("host", ""), acct.Get("username", "")); }
+        static string NameOr(string name, string user) { return string.IsNullOrWhiteSpace(name) ? user : name.Trim(); }
+
+        // يضيف الحساب أو يحدّث الموجود. at = موقعه في القايمة عند التعديل، أو -1 للإضافة. لو تغيّر الرابط أو اسم المستخدم ينقل مجلد بياناته
+        int Upsert(int at, string name, string host, string user, string pass)
+        {
+            if (at >= 0 && (!accounts[at].Host.Equals(host, StringComparison.OrdinalIgnoreCase) || !accounts[at].User.Equals(user, StringComparison.OrdinalIgnoreCase)))
+            {
+                string od = DirOf(accounts[at].Host, accounts[at].User), nd = DirOf(host, user);
+                try { if (Directory.Exists(od) && !Directory.Exists(nd)) Directory.Move(od, nd); } catch { }
+            }
+            int j = FindAccount(host, user);
+            if (at < 0) at = j;
+            if (at < 0) { accounts.Add(new SavedAccount()); at = accounts.Count - 1; }
+            else if (j >= 0 && j != at) { accounts.RemoveAt(j); if (j < at) at--; }   // نفس الرابط واسم المستخدم ما يتكرر
+            accounts[at].Name = NameOr(name, user); accounts[at].Host = host; accounts[at].User = user; accounts[at].Pass = pass;
+            AccountStore.Save(accountsPath, accounts);
+            return at;
+        }
+
+        // يجعل الحساب هو الحالي: يكتب بياناته في account.ini ويربط ملفاته بمجلده
+        void UseAccount(SavedAccount a)
+        {
+            acct.Set("host", a.Host); acct.Set("username", a.User); acct.Set("password", a.Pass); acct.Save();
+            ApplyAccountPaths();
+            Log.Write("account: " + a.Name + " (host " + a.Host + ")"); RefreshSubscription();
+        }
+
+        // يبدّل للحساب: يوقف الفيديو ويفرّغ القنوات المعروضة ويحمّل قنوات الحساب الجديد
+        void SwitchTo(int i, bool fresh)
+        {
+            StopMpv(false);
+            UseAccount(accounts[i]);
+            all = new List<Channel>(); view = new List<Channel>(); lv.VirtualListSize = 0; lv.Invalidate(); count.Value = "0";
+            LoadChannelsAsync(fresh);
+        }
+
         bool EnsureAccount()
         {
             while (!AccountComplete())
             {
-                using (var lf = new LoginForm(acct.Get("host", ""), acct.Get("username", ""), "", false))
+                using (var lf = new LoginForm("", acct.Get("host", ""), acct.Get("username", ""), "", false))
                 {
                     lf.CenterOn(Screen.FromControl(this).WorkingArea); if (lf.ShowDialog() != DialogResult.OK) return false;
-                    SaveAccount(lf.Host, lf.User, lf.Pass);
+                    UseAccount(accounts[Upsert(-1, lf.AccountName, lf.Host, lf.User, lf.Pass)]);
                 }
             }
             return true;
         }
 
-        void SaveAccount(string host, string user, string pass)
+        // زر Account: قايمة الحسابات المحفوظة (تبديل، تعديل، إضافة)
+        void ShowAccounts()
         {
-            acct.Set("host", host); acct.Set("username", user); acct.Set("password", pass); acct.Save();
-            try { File.Delete(cachePath); } catch { }
+            var pop = new AccountPopup(btnAccount, accounts, ActiveIndex(), SwitchAccount, EditAccount, AddAccount);
+            pop.ShowAt(btnAccount.PointToScreen(new Point(btnAccount.Width - 320, btnAccount.Height + 6)), 320);
         }
 
-        void ChangeAccount()
+        void SwitchAccount(int i) { if (i != ActiveIndex()) SwitchTo(i, false); }
+
+        void AddAccount()
         {
-            using (var lf = new LoginForm(acct.Get("host", ""), acct.Get("username", ""), acct.Get("password", ""), true))
+            using (var lf = new LoginForm("", acct.Get("host", ""), "", "", false))
             {
                 lf.CenterOn(Screen.FromControl(this).WorkingArea); if (lf.ShowDialog(this) != DialogResult.OK) return;
-                StopMpv(false);
-                if (lf.SignedOut)
-                {
-                    SaveAccount("", "", "");
-                    foreach (string p in new[] { favPath, recentPath, lastPath }) { try { File.Delete(p); } catch { } }
-                    fav.Clear(); recent.Clear(); all = new List<Channel>(); view = new List<Channel>(); lv.VirtualListSize = 0; lv.Invalidate(); count.Value = "0";
-                    if (!EnsureAccount()) { Close(); return; }
-                }
-                else SaveAccount(lf.Host, lf.User, lf.Pass);
-                Log.Write("account changed (host " + acct.Get("host", "") + ")"); RefreshSubscription();
-                LoadChannelsAsync(true);
+                SwitchTo(Upsert(-1, lf.AccountName, lf.Host, lf.User, lf.Pass), true);
             }
+        }
+
+        void EditAccount(int i)
+        {
+            SavedAccount a = accounts[i];
+            using (var lf = new LoginForm(a.Name, a.Host, a.User, a.Pass, true))
+            {
+                lf.CenterOn(Screen.FromControl(this).WorkingArea); if (lf.ShowDialog(this) != DialogResult.OK) return;
+                if (lf.Removed) { RemoveAccount(i); return; }
+                bool active = i == ActiveIndex();
+                int k = Upsert(i, lf.AccountName, lf.Host, lf.User, lf.Pass);
+                if (active || ActiveIndex() == k) SwitchTo(k, true);
+            }
+        }
+
+        void RemoveAccount(int i)
+        {
+            SavedAccount a = accounts[i]; bool active = i == ActiveIndex();
+            accounts.RemoveAt(i); AccountStore.Save(accountsPath, accounts);
+            try { Directory.Delete(DirOf(a.Host, a.User), true); } catch { }
+            if (!active) return;
+            StopMpv(false);
+            if (accounts.Count > 0) { SwitchTo(0, false); return; }
+            // ما بقى حساب: نفرّغ الحالي ونطلب تسجيل دخول جديد
+            acct.Set("host", ""); acct.Set("username", ""); acct.Set("password", ""); acct.Save();
+            all = new List<Channel>(); view = new List<Channel>(); fav.Clear(); recent.Clear(); lv.VirtualListSize = 0; lv.Invalidate(); count.Value = "0";
+            if (!EnsureAccount()) { Close(); return; }
+            LoadChannelsAsync(true);
         }
 
         string activeShader; bool shaderOff, embedded;

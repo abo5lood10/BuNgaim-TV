@@ -467,17 +467,17 @@ namespace NextBoost
     {
         [DllImport("user32")] static extern bool ReleaseCapture();
         [DllImport("user32")] static extern IntPtr SendMessage(IntPtr h, int msg, int w, int l);
-        public string Host, User, Pass; public bool SignedOut;
-        readonly TextBox tbHost = new TextBox(), tbUser = new TextBox(), tbPass = new TextBox();
+        public string AccountName, Host, User, Pass; public bool Removed;
+        readonly TextBox tbName = new TextBox(), tbHost = new TextBox(), tbUser = new TextBox(), tbPass = new TextBox();
         readonly StatusLine msg = new StatusLine(); Bitmap bgBmp; public Bitmap Bg { get { return bgBmp; } }
-        bool busy; const int W = 470, H = 420;
+        bool busy; const int W = 470, H = 496;
 
-        public LoginForm(string host, string user, string pass, bool canSignOut)
+        public LoginForm(string name, string host, string user, string pass, bool canRemove)
         {
             FormBorderStyle = FormBorderStyle.None; StartPosition = FormStartPosition.CenterScreen; ShowInTaskbar = true; Text = "BuNgaim TV";
             ClientSize = new Size(W, H); BackColor = T.WindowBack; DoubleBuffered = true;
             Region = new Region(T.RR(new RectangleF(0, 0, Width, Height), 20));
-            int[] ys = { 92, 168, 244 }; TextBox[] tbs = { tbHost, tbUser, tbPass }; string[] vals = { host, user, pass };
+            int[] ys = { 92, 168, 244, 320 }; TextBox[] tbs = { tbName, tbHost, tbUser, tbPass }; string[] vals = { name, host, user, pass };
             Bitmap bg = bgBmp = new Bitmap(W, H);
             using (Graphics g = Graphics.FromImage(bg))
             {
@@ -486,27 +486,34 @@ namespace NextBoost
                 T.Card(g, new RectangleF(1, 1, W - 3, H - 3), 20);
                 foreach (int y in ys) T.FieldBox(g, new RectangleF(28, y, W - 56, 40));
             }
-            for (int i = 0; i < 3; i++)
+            for (int i = 0; i < 4; i++)
             {
                 TextBox tb = tbs[i]; tb.BorderStyle = BorderStyle.None; tb.BackColor = T.Field; tb.ForeColor = T.Text; tb.Font = T.F(11f);
                 tb.Bounds = new Rectangle(44, ys[i] + 10, W - 88, 24); tb.Text = vals[i] ?? ""; Controls.Add(tb);
             }
             tbPass.UseSystemPasswordChar = true;
             tbHost.HandleCreated += (s, e) => Native.SendMessage(tbHost.Handle, 0x1501, (IntPtr)1, "http://example.com:8080");
-            msg.Bounds = new Rectangle(28, 296, W - 56, 24); msg.Value = ""; msg.Tag = bg; Controls.Add(msg);
-            Cmd ok = new Cmd("Sign in", TrySignIn, true) { Bounds = new Rectangle(W - 28 - 130, 352, 130, 40), Tag = bg };
-            Cmd cancel = new Cmd("Cancel", delegate { DialogResult = DialogResult.Cancel; }, false) { Bounds = new Rectangle(W - 28 - 130 - 8 - 100, 352, 100, 40), Tag = bg };
+            msg.Bounds = new Rectangle(28, 372, W - 56, 24); msg.Value = ""; msg.Tag = bg; Controls.Add(msg);
+            Cmd ok = new Cmd("Sign in", TrySignIn, true) { Bounds = new Rectangle(W - 28 - 130, 428, 130, 40), Tag = bg };
+            Cmd cancel = new Cmd("Cancel", delegate { DialogResult = DialogResult.Cancel; }, false) { Bounds = new Rectangle(W - 28 - 130 - 8 - 100, 428, 100, 40), Tag = bg };
             Controls.Add(ok); Controls.Add(cancel);
-            if (canSignOut) Controls.Add(new Cmd("Sign out", delegate { SignedOut = true; DialogResult = DialogResult.OK; }, false) { Bounds = new Rectangle(28, 352, 100, 40), LabelColor = Color.FromArgb(255, 150, 150), Tag = bg });
+            if (canRemove) Controls.Add(new Cmd("Remove", RemoveNow, false) { Bounds = new Rectangle(28, 428, 100, 40), LabelColor = Color.FromArgb(255, 150, 150), Tag = bg });
             MouseDown += delegate(object o, MouseEventArgs e) { if (e.Button == MouseButtons.Left) { ReleaseCapture(); SendMessage(Handle, 0xA1, 2, 0); } };
             Paint += delegate(object o, PaintEventArgs e)
             {
                 e.Graphics.DrawImageUnscaled(bg, 0, 0); T.Setup(e.Graphics);
                 T.Txt(e.Graphics, "Sign in", T.F(16, FontStyle.Bold), T.Text, new RectangleF(28, 16, W - 56, 32), StringAlignment.Near);
                 T.Txt(e.Graphics, "Enter your own IPTV subscription details", T.F(9.5f), T.Dim, new RectangleF(28, 50, W - 56, 22), StringAlignment.Near);
-                string[] lb = { "Server URL", "Username", "Password" };
-                for (int i = 0; i < 3; i++) T.Txt(e.Graphics, lb[i], T.F(9f, FontStyle.Bold), T.Dim, new RectangleF(30, ys[i] - 20, 200, 18), StringAlignment.Near);
+                string[] lb = { "Name (optional)", "Server URL", "Username", "Password" };
+                for (int i = 0; i < 4; i++) T.Txt(e.Graphics, lb[i], T.F(9f, FontStyle.Bold), T.Dim, new RectangleF(30, ys[i] - 20, 200, 18), StringAlignment.Near);
             };
+        }
+
+        // حذف الحساب من القايمة (بعد التأكيد)
+        void RemoveNow()
+        {
+            if (!ThemedBox.Ask(this, "Remove account", "Remove this account from BuNgaim TV? Its favorites and channel list saved on this PC will be deleted too.")) return;
+            Removed = true; DialogResult = DialogResult.OK;
         }
 
         public void CenterOn(Rectangle wa) { StartPosition = FormStartPosition.Manual; Location = new Point(wa.X + (wa.Width - W) / 2, wa.Y + (wa.Height - H) / 2); }
@@ -583,7 +590,7 @@ namespace NextBoost
                     {
                         busy = false;
                         if (err != null) { Say(err, true); return; }
-                        Host = host; User = user; Pass = pass; DialogResult = DialogResult.OK;
+                        AccountName = tbName.Text.Trim(); Host = host; User = user; Pass = pass; DialogResult = DialogResult.OK;
                     }));
                 }
                 catch { }
@@ -593,7 +600,7 @@ namespace NextBoost
     // فحص التحديث (نفس فكرة DsMaN): ملف نصي صغير فيه version=... و url=... على رابط أو مسار. التحديث ما يتم إلا لما المستخدم يضغط الزر.
     static class Updater
     {
-        public const string Version = "1.6";
+        public const string Version = "1.7";
         public const string DefaultSource = "https://raw.githubusercontent.com/abo5lood10/BuNgaim-TV/main/update.txt";
         public static string Source = "";   // يتبدّل من settings.ini (UpdateUrl): رابط أو مسار ملف
         public static volatile bool Available, Busy; public static string NewVersion = "", DownloadUrl = "", Message = "";
@@ -885,7 +892,7 @@ namespace NextBoost
             else act = () => onPick(r);
             owner.BeginInvoke(act); Close();
         }
-        static void Gear(Graphics g, float cx, float cy, float r, Color c)
+        internal static void Gear(Graphics g, float cx, float cy, float r, Color c)
         {
             using (Pen p = new Pen(c, 1.8f))
             {
@@ -910,6 +917,56 @@ namespace NextBoost
                 if (i == cur) using (Brush b = new SolidBrush(Color.FromArgb(52, 199, 89))) g.FillEllipse(b, row.X + 10, row.Y + row.Height / 2f - 4, 8, 8);
                 T.Txt(g, items[i].Name, T.F(10f, i == cur ? FontStyle.Bold : FontStyle.Regular), T.Text, new RectangleF(row.X + 28, row.Y, row.Width - 80, row.Height), StringAlignment.Near);
                 if (items[i].Name != "Off") Gear(g, row.Right - 20, row.Y + row.Height / 2f, 8f, (i == hover && hoverGear) ? Color.FromArgb(255, 214, 54) : T.Dim);
+            }
+        }
+    }
+
+    // قايمة الحسابات تحت زر Account: اختيار للتبديل، والترس للتعديل، وآخر صف لإضافة حساب
+    class AccountPopup : Form
+    {
+        readonly List<SavedAccount> items; readonly int cur; int hover = -1; bool hoverGear; readonly Action<int> onPick, onEdit; readonly Action onAdd; readonly Control owner; const int RH = 50;
+        public AccountPopup(Control owner, List<SavedAccount> items, int cur, Action<int> onPick, Action<int> onEdit, Action onAdd)
+        {
+            this.owner = owner; this.items = items; this.cur = cur; this.onPick = onPick; this.onEdit = onEdit; this.onAdd = onAdd;
+            FormBorderStyle = FormBorderStyle.None; ShowInTaskbar = false; StartPosition = FormStartPosition.Manual; TopMost = true; DoubleBuffered = true; BackColor = T.WindowBack;
+            Deactivate += (s, e) => Close();
+        }
+        public void ShowAt(Point screen, int width)
+        {
+            ClientSize = new Size(width, (items.Count + 1) * RH + 16); Location = screen;
+            Region = new Region(T.RR(new RectangleF(0, 0, Width, Height), 14)); Show();
+        }
+        int RowAt(int y) { int r = (y - 8) / RH; return (y < 8 || r > items.Count) ? -1 : r; }
+        protected override void OnMouseMove(MouseEventArgs e) { int r = RowAt(e.Y); bool gz = e.X > Width - 44 && r >= 0 && r < items.Count; if (r != hover || gz != hoverGear) { hover = r; hoverGear = gz; Invalidate(); } }
+        protected override void OnMouseLeave(EventArgs e) { hover = -1; Invalidate(); }
+        protected override void OnMouseDown(MouseEventArgs e)
+        {
+            int r = RowAt(e.Y); if (r < 0) return;
+            Action act;
+            if (r == items.Count) act = onAdd;
+            else if (e.X > Width - 44) act = () => onEdit(r);
+            else act = () => onPick(r);
+            owner.BeginInvoke(act); Close();
+        }
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            Graphics g = e.Graphics; T.Setup(g);
+            using (LinearGradientBrush b = new LinearGradientBrush(new Rectangle(0, 0, Width, Height), Color.FromArgb(46, 74, 58), Color.FromArgb(14, 30, 20), 70f)) g.FillRectangle(b, 0, 0, Width, Height);
+            using (Pen p = new Pen(Color.FromArgb(110, 255, 255, 255))) using (GraphicsPath gp = T.RR(new RectangleF(0.5f, 0.5f, Width - 2, Height - 2), 14)) g.DrawPath(p, gp);
+            for (int i = 0; i <= items.Count; i++)
+            {
+                RectangleF row = new RectangleF(8, 8 + i * RH, Width - 16, RH - 2);
+                if (i == hover) using (GraphicsPath gp = T.RR(row, 9)) using (Brush b = new SolidBrush(Color.FromArgb(i == items.Count ? 70 : 50, 52, 199, 89))) g.FillPath(b, gp);
+                if (i == items.Count)
+                {
+                    T.Txt(g, "+  Add account", T.F(10f, FontStyle.Bold), Color.FromArgb(255, 214, 54), new RectangleF(row.X + 12, row.Y, row.Width - 20, row.Height), StringAlignment.Near);
+                    continue;
+                }
+                bool on = i == cur;
+                if (on) using (Brush b = new SolidBrush(Color.FromArgb(52, 199, 89))) g.FillEllipse(b, row.X + 10, row.Y + row.Height / 2f - 4, 8, 8);
+                T.Txt(g, items[i].Name, T.F(10f, on ? FontStyle.Bold : FontStyle.Regular), T.Text, new RectangleF(row.X + 28, row.Y + 5, row.Width - 64, 20), StringAlignment.Near);
+                T.Txt(g, items[i].User + "  ·  " + items[i].Host, T.F(8f), T.Dim, new RectangleF(row.X + 28, row.Y + 24, row.Width - 64, 16), StringAlignment.Near);
+                FilterPopup.Gear(g, row.Right - 20, row.Y + row.Height / 2f, 8f, (i == hover && hoverGear) ? Color.FromArgb(255, 214, 54) : T.Dim);
             }
         }
     }}
