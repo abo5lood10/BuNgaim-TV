@@ -12,7 +12,7 @@ $lines += ('/resource:"' + "$src\name.bin" + '",name.bin')
 if (Test-Path "$src\icon-256.png") { $lines += ('/resource:"' + "$src\icon-256.png" + '",icon.png') }
 foreach ($n in 'f1.bin', 'f2.bin') { if (Test-Path "$src\fonts\$n") { $lines += ('/resource:"' + "$src\fonts\$n" + '",' + $n) } }
 $lines += ('/out:"' + "$app\BuNgaim TV.exe" + '"')
-$lines += ('"' + "$src\NextBoost.cs" + '"'); $lines += ('"' + "$src\Theme.cs" + '"')
+$lines += ('"' + "$src\NextBoost.cs" + '"'); $lines += ('"' + "$src\Theme.cs" + '"'); $lines += ('"' + "$src\Vod.cs" + '"')
 [IO.File]::WriteAllLines($rsp, $lines, (New-Object Text.UTF8Encoding $true))
 & $csc "@$rsp"
 if ($LASTEXITCODE -ne 0) { throw 'compile failed' }

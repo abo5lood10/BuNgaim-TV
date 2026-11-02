@@ -23,7 +23,13 @@ using System.Windows.Forms;
 
 namespace NextBoost
 {
-    class Channel { public long Id; public string Name; public string Cat; }
+    class Channel
+    {
+        public long Id; public string Name; public string Cat;
+        // الأفلام والمسلسلات والحلقات (Kind فاضي = قناة بث مباشر؛ وإلا "movie" أو "series" أو "ep")
+        public string Kind, Ext, Icon, Plot, Genre, Cast, Director, Year, Duration;
+        public double Rating; public long Added; public int Season, Ep; public byte Info;   // Info: 0 التفاصيل ما انجلبت، 1 تنجلب، 2 جاهزة
+    }
 
     static class Native
     {
@@ -228,7 +234,7 @@ namespace NextBoost
             }
         }
     }
-    class MainForm : Form, IBackHost
+    partial class MainForm : Form, IBackHost
     {
         readonly string appDir, mpvExe, shaderDir, accountsPath; string cachePath, favPath, lastPath, recentPath;
         List<SavedAccount> accounts = new List<SavedAccount>();
@@ -286,6 +292,7 @@ namespace NextBoost
                 else if (args[i] == "--testui") argTestUi = true;
             }
 
+            ParseVodArgs(args);
             Text = "BuNgaim TV";
             FormBorderStyle = FormBorderStyle.None; var wa0 = (argScreen >= 0 && argScreen < Screen.AllScreens.Length ? Screen.AllScreens[argScreen] : Screen.PrimaryScreen).WorkingArea;
             int iw0 = Math.Min(1500, wa0.Width - 60), ih0 = Math.Min(840, wa0.Height - 60);
@@ -300,7 +307,7 @@ namespace NextBoost
             preset = Math.Max(0, Math.Min(Presets.Names.Length - 1, cfg.Int("Preset", 1)));
             BuildUi();
             LoadAccounts();
-            Load += (s, e) => { ApplyLayout(); if (!EnsureAccount()) { BeginInvoke(new Action(Close)); return; } LoadChannelsAsync(false); StartUpdateChecks(); };
+            Load += (s, e) => { ApplyLayout(); if (!EnsureAccount()) { BeginInvoke(new Action(Close)); return; } if (startMode > 0) SetMode(startMode); else LoadChannelsAsync(false); StartUpdateChecks(); };
             SizeChanged += (s, e) => { ApplyLayout(); ShaderForVisibility(); }; LocationChanged += (s, e) => SyncVideoWindow();
             // mpv يعيد وضع نافذته لما يبدأ الفيديو، فنثبّتها بمكانها كل نص ثانية
             var syncTimer = new System.Windows.Forms.Timer { Interval = 1000 };
@@ -317,7 +324,7 @@ namespace NextBoost
                 SyncVideoWindow();
             };
             syncTimer.Start();
-            FormClosing += (s, e) => { Log.Write("exit"); token++; SaveSettings(); try { if (mpv != null && !mpv.HasExited) mpv.Kill(); } catch { } };
+            FormClosing += (s, e) => { Log.Write("exit"); token++; SaveSettings(); store.Flush(); try { if (mpv != null && !mpv.HasExited) mpv.Kill(); } catch { } };
         }
 
         // ESC يرجّع من الشاشة الكاملة حتى لو الفيديو مدمج داخل النافذة (المفاتيح تروح للنافذة الأم)
@@ -357,11 +364,11 @@ namespace NextBoost
             if (!videoFull)
             {
                 fullPrevState = WindowState; fullPrevBounds = Bounds;
-                videoFull = true; Region = null; WindowState = FormWindowState.Normal; Bounds = Screen.FromControl(this).Bounds; ApplyLayout();
+                videoFull = true; Region = null; WindowState = FormWindowState.Normal; Bounds = Screen.FromControl(this).Bounds; ApplyLayout(); FsState(true);
             }
             else
             {
-                videoFull = false; Bounds = fullPrevBounds; if (fullPrevState == FormWindowState.Maximized) ToggleMax(); ApplyLayout();
+                videoFull = false; FsState(false); Bounds = fullPrevBounds; if (fullPrevState == FormWindowState.Maximized) ToggleMax(); ApplyLayout();
             }
         }
 
@@ -382,7 +389,7 @@ namespace NextBoost
             tbSearch.HandleCreated += (s, e) => Native.SendMessage(tbSearch.Handle, 0x1501, (IntPtr)1, "Search channels (e.g. NFL or BEIN)…");
             cmdCat = new Cmd("All categories", ShowCatMenu, false) { Chev = true };
             tgFav = new Tog("Favorites", false, T.Yellow) { Glyph = "star" };
-            string[] chipNames = { "All", "NFL", "BEIN", "BEIN 4K", "BEIN FHD", "Alwan", "Premier League", "Recent" };
+            string[] chipNames = LiveChips;
             for (int i = 0; i < chipNames.Length; i++) { int k = i; var ch = new Tog(chipNames[i], i == 0, null); ch.Changed += () => SetChip(k); chips.Add(ch); }
             hint = new StatusLine { Col = T.Dim }; count = new StatusLine { Col = T.Dim, Al = StringAlignment.Far };
 
@@ -408,9 +415,9 @@ namespace NextBoost
             {
                 Graphics g = e.Graphics; T.Setup(g); var c = view[e.ItemIndex]; bool sel = e.Item.Selected;
                 RectangleF r = new RectangleF(e.Bounds.X, e.Bounds.Y, e.Bounds.Width, e.Bounds.Height);
-                if (e.ColumnIndex == 0) { if (fav.Contains(c.Id)) T.Icon(g, "star", r.X + 20, r.Y + r.Height / 2f, 11f, T.Yellow); else T.Icon(g, "starO", r.X + 20, r.Y + r.Height / 2f, 10f, sel ? Color.FromArgb(220, 255, 255, 255) : Color.FromArgb(95, 255, 255, 255)); }
+                if (e.ColumnIndex == 0) { if (c.Kind == "ep") { } else if (fav.Contains(c.Id)) T.Icon(g, "star", r.X + 20, r.Y + r.Height / 2f, 11f, T.Yellow); else T.Icon(g, "starO", r.X + 20, r.Y + r.Height / 2f, 10f, sel ? Color.FromArgb(220, 255, 255, 255) : Color.FromArgb(95, 255, 255, 255)); }
                 else if (e.ColumnIndex == 1) T.Txt(g, c.Name, T.F(10f, FontStyle.Bold), sel ? Color.White : T.Text, new RectangleF(r.X, r.Y, r.Width - 8, r.Height), StringAlignment.Near);
-                else T.Txt(g, EnName(c.Cat), T.F(9f), sel ? Color.FromArgb(230, 255, 230) : T.Dim, new RectangleF(r.X, r.Y, r.Width - 12, r.Height), StringAlignment.Near);
+                else T.Txt(g, RowSub(c), T.F(9f), sel ? Color.FromArgb(230, 255, 230) : RowSubColor(c), new RectangleF(r.X, r.Y, r.Width - 12, r.Height), StringAlignment.Near);
             };
             lv.DoubleClick += (s, e) => { if (lv.PointToClient(Cursor.Position).X >= 44) PlaySelected(); };
             lv.MouseDown += (s, e) =>
@@ -420,10 +427,16 @@ namespace NextBoost
             };
             lv.SelectedIndexChanged += (s, e) =>
             {
+                OnSelChanged();
                 if (lv.SelectedIndices.Count == 0) return; int i = lv.SelectedIndices[0]; int top = lv.TopItem != null ? lv.TopItem.Index : 0, vis = Math.Max(1, lv.ClientSize.Height / 32);
                 if (i < top) lv.EnsureVisible(i); else if (i >= top + vis) lv.EnsureVisible(i);
             };
-            lv.KeyDown += (s, e) => { if (e.KeyCode == Keys.Enter) { PlaySelected(); e.SuppressKeyPress = true; } else if (e.KeyCode == Keys.F) ToggleFav(); };
+            lv.KeyDown += (s, e) =>
+            {
+                if (e.KeyCode == Keys.Enter) { PlaySelected(); e.SuppressKeyPress = true; }
+                else if (e.KeyCode == Keys.F) ToggleFav();
+                else if ((e.KeyCode == Keys.Back || e.KeyCode == Keys.Escape) && openSeries != null) { LeaveEpisodes(true); e.SuppressKeyPress = true; }
+            };
 
             cmdPreset = new Cmd("", ShowPresetMenu, false) { Chev = true };
             cmdFilter = new Cmd("", ShowFilterMenu, false) { Chev = true }; FilterStore.Load(Path.Combine(appDir, "filters.txt"));
@@ -452,13 +465,15 @@ namespace NextBoost
             {
                 if (playing) return;
                 Graphics g = e.Graphics; T.Setup(g); RectangleF r = new RectangleF(0, 0, videoPanel.Width, videoPanel.Height);
+                if (mode != Live) { DrawDetails(g, r); return; }
                 T.Txt(g, "NO SIGNAL", T.F(30f, FontStyle.Bold), Color.FromArgb(150, 255, 255, 255), new RectangleF(r.X, r.Y + r.Height / 2f - 40, r.Width, 44), StringAlignment.Center);
                 T.Txt(g, "Pick a channel and press Play", T.F(11f), Color.FromArgb(100, 255, 255, 255), new RectangleF(r.X, r.Y + r.Height / 2f + 8, r.Width, 26), StringAlignment.Center);
             };
             Controls.Add(videoPanel);
             UpdateButtons();
 
-            tbSearch.TextChanged += (s, e) => Refilter(); tgFav.Changed += () => { if (tgFav.On && (chip != 0 || catIdx != 0)) { SetChip(0); tgFav.On = true; tgFav.Invalidate(); } Refilter(); };
+            BuildVodUi();
+            tbSearch.TextChanged += (s, e) => { if (!suppress) Refilter(); }; tgFav.Changed += () => { if (tgFav.On && (chip != 0 || catIdx != 0)) { SetChip(0); tgFav.On = true; tgFav.Invalidate(); } Refilter(); };
             tbSearch.KeyDown += (s, e) =>
             {
                 if (e.KeyCode == Keys.Enter) { if (lv.SelectedIndices.Count == 0 && view.Count > 0) lv.SelectedIndices.Add(0); PlaySelected(); e.SuppressKeyPress = true; }
@@ -521,9 +536,12 @@ namespace NextBoost
             th.DropDownItems.Add(new ToolStripMenuItem("More themes: coming soon") { Enabled = false });
             m.Items.Add(th);
             var guide = new ToolStripMenuItem("User guide");
-            guide.Click += (s, e) => ThemedBox.Info(this, "User guide", "Pick a channel and press Play (or double-click). Click the star to favorite. Volume goes up to 200%.\n\nThe quick buttons filter the list and search works inside the selected one. The version button turns yellow when an update is ready.");
+            guide.Click += (s, e) => ThemedBox.Info(this, "User guide", "Pick a channel and press Play (or double-click). Click the star to favorite. Volume goes up to 200%.\n\nLive TV, Movies and Series are at the top: movies and series keep your place, so they continue where you stopped (hold Shift to start over), and the next episode starts by itself. Quality and Filter work the same way for all three.\n\nThe quick buttons filter the list and search works inside the selected one. The version button turns yellow when an update is ready.");
             m.Items.Add(guide);
             m.Items.Add(new ToolStripSeparator());
+            var an = new ToolStripMenuItem("Auto-play next episode") { Checked = autoNext };
+            an.Click += (s, e) => { autoNext = !autoNext; cfg.Set("AutoNext", autoNext ? "1" : "0"); cfg.Save(); };
+            m.Items.Add(an);
             var sw = new ToolStripMenuItem("Start with Windows") { Checked = StartsWithWindows() };
             sw.Click += (s, e) => SetStartsWithWindows(!sw.Checked);
             m.Items.Add(sw);
@@ -643,8 +661,8 @@ namespace NextBoost
         void ApplyAccountPaths()
         {
             string dir = AccountDir(); Directory.CreateDirectory(dir);
-            cachePath = Path.Combine(dir, "channels-cache.json"); favPath = Path.Combine(dir, "favorites.txt");
-            lastPath = Path.Combine(dir, "last-channel.txt"); recentPath = Path.Combine(dir, "recent.txt");
+            ResetSections(); SetSectPaths();
+            lastPath = Path.Combine(dir, "last-channel.txt");
             fav.Clear(); recent.Clear(); LoadFavorites(); LoadRecent();
         }
 
@@ -780,7 +798,7 @@ namespace NextBoost
                 int W = ClientSize.Width, H = ClientSize.Height; T.W = W; T.H = H; T.ResetBg();
                 cards.Clear(); fields.Clear(); videoFrame = RectangleF.Empty;
                 bool full = videoFull && playing;
-                foreach (var c in uiControls) c.Visible = !full; verBtn.Visible = !full && Updater.Available;
+                foreach (var c in uiControls) c.Visible = !full; verBtn.Visible = !full && Updater.Available; if (!full) ApplyModeVisibility();
                 btnFull.Visible = btnMute.Visible = vol.Visible = !full;
                 if (full)
                 {
@@ -815,11 +833,11 @@ namespace NextBoost
                 cards.Add(new RectangleF(x0, listTop, lw, ctlTop - 8 - listTop));
                 RectangleF lf = new RectangleF(x0 + 12, listTop + 28, lw - 24, ctlTop - 8 - listTop - 28 - 12); fields.Add(lf);
                 hint.Bounds = R(x0 + 18, listTop + 4, lw / 2, 22); count.Bounds = R(x0 + lw - 18 - 160, listTop + 4, 160, 22);
-                hint.Value = "";
+                PlaceEpisodeHeader(x0, listTop, lw);
                 int sbw = SystemInformation.VerticalScrollBarWidth + 2, visW = (int)lf.Width - 8 - 18;
                 lv.Bounds = R((int)lf.X + 4, (int)lf.Y + 4, visW + sbw, (int)lf.Height - 8);   // العرض الزايد يخفي شريط التمرير الأصلي (نقصّه بالـ Region)
                 vscroll.Bounds = R((int)(lf.Right - 4 - 12), (int)lf.Y + 10, 12, (int)lf.Height - 20);
-                int cw2 = Math.Min(280, visW * 36 / 100); lv.Columns[2].Width = cw2; lv.Columns[1].Width = Math.Max(120, visW - 38 - cw2);
+                int cw2 = mode == Live ? Math.Min(280, visW * 36 / 100) : 104; lv.Columns[2].Width = cw2; lv.Columns[1].Width = Math.Max(120, visW - 38 - cw2);
                 lv.Region = new Region(T.RR(new RectangleF(0, 0, visW, lv.Height), 10));
 
                 cards.Add(new RectangleF(x0, ctlTop, lw, ctlH));
@@ -854,7 +872,7 @@ namespace NextBoost
                 }
 
                 T.StaticBg = BuildBackground();
-                int rightEdge = ClientSize.Width - 16; btnDays.Bounds = R(rightEdge - 150, 60, 150, 32); verBtn.Bounds = R(rightEdge - 150 - 8 - 150, 60, 150, 32);   // أقصى اليمين
+                int rightEdge = ClientSize.Width - 16; btnDays.Bounds = R(rightEdge - 150, 60, 150, 32); verBtn.Bounds = R(rightEdge - 150 - 8 - 150, 60, 150, 32); PlaceModeToggles();   // أقصى اليمين
                 foreach (var c in uiControls) c.Invalidate(); Invalidate();
             }
             finally { layouting = false; SyncVideoWindow(); }
@@ -966,7 +984,7 @@ namespace NextBoost
         void ScrollList(int delta) { int cur = lv.TopItem != null ? lv.TopItem.Index : 0; ScrollTo(cur + delta); }
         void ToggleFavAt(int index)
         {
-            if (index < 0 || index >= view.Count) return;
+            if (index < 0 || index >= view.Count || view[index].Kind == "ep") return;
             long id = view[index].Id; if (!fav.Remove(id)) fav.Add(id);
             try { File.WriteAllLines(favPath, fav.Select(x => x.ToString()).ToArray()); } catch { }
             lv.Invalidate(); if (tgFav.On) Refilter();
@@ -974,6 +992,7 @@ namespace NextBoost
         void ToggleFav()
         {
             if (lv.SelectedIndices.Count == 0) return;
+            if (view[lv.SelectedIndices[0]].Kind == "ep") return;
             long id = view[lv.SelectedIndices[0]].Id;
             if (!fav.Remove(id)) fav.Add(id);
             try { File.WriteAllLines(favPath, fav.Select(x => x.ToString()).ToArray()); } catch { }
@@ -986,43 +1005,50 @@ namespace NextBoost
             try { File.WriteAllLines(recentPath, recent.Select(x => x.ToString()).ToArray()); } catch { }
         }
 
+        // يحمّل قائمة القسم الحالي (بث / أفلام / مسلسلات)؛ وفي صفحة حلقات مسلسل يعيد جلب الحلقات
         void LoadChannelsAsync(bool force)
         {
+            if (openSeries != null) { OpenSeries(openSeries); return; }
+            if (mode != Live) { LoadVodAsync(mode, force); return; }
+            int gen = accountGen; string cp = SecFile(Live, "cache"); Cred cr = Creds();
             SetStatus("Loading channels…");
             ThreadPool.QueueUserWorkItem(delegate
             {
+                List<Channel> list = null; List<string> cs = null;
                 try
                 {
-                    if (!force && File.Exists(cachePath) && (DateTime.Now - File.GetLastWriteTime(cachePath)).TotalHours < 12 && ReadCache()) { }
-                    else { FetchFromApi(); Log.Write("channels fetched from server"); }
-                    Log.Write("channels ready: " + all.Count); BeginInvoke(new Action(() => { BuildCatOrder(); Refilter(); SetStatus(string.Format("{0} channels — pick one and double-click to play", all.Count)); AutoStart(); }));
+                    if (!force && File.Exists(cp) && (DateTime.Now - File.GetLastWriteTime(cp)).TotalHours < 12 && ReadCache(cp, out list, out cs)) { }
+                    else { FetchFromApi(cr, cp, out list, out cs); Log.Write("channels fetched from server"); }
+                    Log.Write("channels ready: " + list.Count); BeginInvoke(new Action(() => FinishLive(gen, list, cs, true)));
                 }
                 catch (Exception ex)
                 {
                     Log.Write("channels: " + ex.Message); SetStatus("Could not load channels: " + ex.Message);
-                    if (all.Count == 0 && ReadCache()) BeginInvoke(new Action(() => { BuildCatOrder(); Refilter(); }));
+                    if (ReadCache(cp, out list, out cs)) BeginInvoke(new Action(() => FinishLive(gen, list, cs, false)));
                 }
             });
         }
 
-        bool ReadCache()
+        static bool ReadCache(string cachePath, out List<Channel> list, out List<string> cats)
         {
+            list = null; cats = null;
             try
             {
                 var js = new JavaScriptSerializer { MaxJsonLength = int.MaxValue };
                 var root = js.Deserialize<Dictionary<string, object>>(File.ReadAllText(cachePath, Encoding.UTF8));
-                var list = new List<Channel>();
+                var l = new List<Channel>();
                 foreach (Dictionary<string, object> o in (System.Collections.ArrayList)root["channels"])
-                    list.Add(new Channel { Id = Convert.ToInt64(o["id"]), Name = Convert.ToString(o["name"]), Cat = Convert.ToString(o["cat"]) });
-                all = list; cats = ((System.Collections.ArrayList)root["categories"]).Cast<object>().Select(Convert.ToString).ToList();
-                return all.Count > 0;
+                    l.Add(new Channel { Id = Convert.ToInt64(o["id"]), Name = Convert.ToString(o["name"]), Cat = Convert.ToString(o["cat"]) });
+                if (l.Count == 0) return false;
+                list = l; cats = ((System.Collections.ArrayList)root["categories"]).Cast<object>().Select(Convert.ToString).ToList();
+                return true;
             }
             catch { return false; }
         }
 
-        void FetchFromApi()
+        static void FetchFromApi(Cred cr, string cachePath, out List<Channel> all, out List<string> cats)
         {
-            string host = acct.Get("host", ""), u = acct.Get("username", ""), p = acct.Get("password", "");
+            string host = cr.Host, u = cr.User, p = cr.Pass;
             if (host == "" || u == "" || p == "") throw new Exception("account.ini is incomplete");
             ServicePointManager.SecurityProtocol = (SecurityProtocolType)3072;
             string api = host + "/player_api.php?username=" + Uri.EscapeDataString(u) + "&password=" + Uri.EscapeDataString(p);
@@ -1073,24 +1099,19 @@ namespace NextBoost
         }
 
         // الزر السريع والتصنيف نطاقين لا يجتمعون: اختيار واحد منهم يلغي الثاني، والبحث يكون داخل النطاق المختار فقط
-        void SetChip(int k) { tgFav.On = false; tgFav.Invalidate(); chip = k; catIdx = 0; cmdCat.Text2 = "All categories"; cmdCat.Invalidate(); for (int i = 0; i < chips.Count; i++) { chips[i].On = i == k; chips[i].Invalidate(); } Refilter(); }
+        void SetChip(int k) { if (openSeries != null) { SetSeason(k); return; } tgFav.On = false; tgFav.Invalidate(); chip = k; catIdx = 0; cmdCat.Text2 = "All categories"; cmdCat.Invalidate(); for (int i = 0; i < chips.Count; i++) { chips[i].On = i == k; chips[i].Invalidate(); } Refilter(); }
         void ClearChips() { chip = -1; for (int i = 0; i < chips.Count; i++) { chips[i].On = false; chips[i].Invalidate(); } }
-
-        void BuildCatOrder()
-        {
-            var counts = all.GroupBy(x => x.Cat ?? "").ToDictionary(g => g.Key, g => g.Count());
-            catOrder = cats.Where(counts.ContainsKey).OrderBy(c => SportsRx.IsMatch(c) ? 0 : 1).ThenBy(c => c, Comparer<string>.Create(Natural)).ToList();
-        }
 
         void ShowCatMenu()
         {
+            if (openSeries != null) { ShowSeasonMenu(); return; }
             var counts = all.GroupBy(x => x.Cat ?? "").ToDictionary(g => g.Key, g => g.Count());
             var m = T.NewMenu();
             var all0 = new ToolStripMenuItem("All categories  (" + all.Count + ")") { Checked = catIdx == 0 }; all0.Click += (s, e) => SetChip(0); m.Items.Add(all0);
             bool sportsDone = false, sep = false;
             for (int i = 0; i < catOrder.Count; i++)
             {
-                int k = i + 1; string nm = catOrder[i]; bool sp = SportsRx.IsMatch(nm);
+                int k = i + 1; string nm = catOrder[i]; bool sp = mode == Live && SportsRx.IsMatch(nm);
                 if (!sep && i == 0 && sp) { m.Items.Add(new ToolStripSeparator()); sep = true; }
                 if (!sp && !sportsDone) { m.Items.Add(new ToolStripSeparator()); sportsDone = true; }
                 var it = new ToolStripMenuItem(EnName(nm) + "   (" + counts[nm] + ")") { Checked = catIdx == k };
@@ -1101,6 +1122,11 @@ namespace NextBoost
         }
 
         void Refilter()
+        {
+            if (openSeries != null) RefilterEpisodes(); else if (mode != Live) RefilterVod(); else RefilterLive();
+        }
+
+        void RefilterLive()
         {
             string q = tbSearch.Text.Trim(); string c = catIdx > 0 && catIdx - 1 < catOrder.Count ? catOrder[catIdx - 1] : null;
             string[] words = q.Length == 0 ? new string[0] : q.Split(new[] { ' ', '-', '_', '|', ':' }, StringSplitOptions.RemoveEmptyEntries);
@@ -1183,7 +1209,8 @@ namespace NextBoost
         {
             if (lv.SelectedIndices.Count == 0) return;
             SaveSettings();
-            StartMpv(view[lv.SelectedIndices[0]], preset);
+            Channel pc = view[lv.SelectedIndices[0]];
+            if (pc.Kind == "series") OpenSeries(pc); else StartMpv(pc, preset);
         }
 
         void StopMpv(bool msg)
@@ -1196,7 +1223,7 @@ namespace NextBoost
 
         static string Q(string s) { return "\"" + s.Replace("\"", "\\\"") + "\""; }
 
-        void StartMpv(Channel c, int presetIdx)
+        void StartMpv(Channel c, int presetIdx, bool auto = false)
         {
             if (!File.Exists(mpvExe)) { ThemedBox.Info(this, "mpv not found", "mpv\\mpv.exe is missing from the folder."); return; }
             if (Process.GetProcessesByName("next").Length > 0)
@@ -1212,23 +1239,24 @@ namespace NextBoost
             Thread.Sleep(400);
 
             EnterPlaying();   // يوسّع النافذة ويطلّع منطقة الفيديو
-            string url = acct.Get("host", "") + "/live/" + acct.Get("username", "") + "/" + acct.Get("password", "") + "/" + c.Id + ".m3u8";
+            PrepareVodPlay(c, auto); string url = UrlFor(c);
             pipeName = "nextboost-" + Process.GetCurrentProcess().Id + "-" + (++token);
             var a = new StringBuilder();
             embedded = true;   // الفيديو دايماً داخل نافذة البرنامج: ديسكورد/OBS يلتقطه مع النافذة
             if (embedded) a.Append("--wid=" + videoPanel.Handle.ToInt64() + " --d3d11-flip=no");   // وضع المشاركة: الفيديو داخل نافذة البرنامج نفسها (ديسكورد/OBS يلتقطه مع النافذة)
             else a.Append("--no-border --auto-window-resize=no --keepaspect-window=no --geometry=640x360+0+0 --title=\"BuNgaim TV - Video\"");
             a.Append(" --cursor-autohide=1000 --input-ipc-server=").Append(pipeName);
-            a.Append(" --force-media-title=").Append(Q(c.Name));
+            a.Append(" --volume=" + (int)vol.Value + (muted ? " --mute=yes" : ""));   // الصوت يبقى نفسه بين البثوث (ما يرجع 100%)
+            a.Append(" --force-media-title=").Append(Q(TitleFor(c)));
             string sh = Presets.Shaders[presetIdx]; activeShader = sh != null ? Path.Combine(shaderDir, sh) : null; shaderOff = false;
             a.Append(sh != null ? " --glsl-shaders=" + Q(Path.Combine(shaderDir, sh)) : " --glsl-shaders=");
-            if (Presets.Fps[presetIdx] > 0) a.Append(" --vf=fps=" + Presets.Fps[presetIdx]);
-            a.Append(' ').Append(Q(url));
+            if (Presets.Fps[presetIdx] > 0 && c.Kind == null) a.Append(" --vf=fps=" + Presets.Fps[presetIdx]);   // سقف 24 فريم للبث فقط؛ المسلسلات 25/30 فريم كانت بترتجف لو انقصّت
+            a.Append(StartArg(c)); a.Append(' ').Append(Q(url));
             mpv = Process.Start(new ProcessStartInfo(mpvExe, a.ToString()) { UseShellExecute = false, WorkingDirectory = Path.GetDirectoryName(mpvExe) });
-            try { File.WriteAllText(lastPath, c.Id + "|" + c.Name, Encoding.UTF8); } catch { }
-            AddRecent(c.Id);
+            if (c.Kind == null) { try { File.WriteAllText(lastPath, c.Id + "|" + c.Name, Encoding.UTF8); } catch { } }
+            if (c.Kind == null || c.Kind == "movie") AddRecent(c.Id); else if (!auto && openSeries != null) AddRecent(openSeries.Id);
             try { Thread.Sleep(400); mpv.PriorityClass = ProcessPriorityClass.High; Native.NoThrottle(mpv); } catch { }
-            Log.Write("play " + c.Id + " '" + c.Name + "' preset=" + presetIdx + (embedded ? " (embedded video)" : " (owned overlay window)"));
+            Log.Write("play " + c.Id + " '" + c.Name + "' preset=" + presetIdx + (c.Kind != null ? " kind=" + c.Kind + StartArg(c) : "") + (embedded ? " (embedded video)" : " (owned overlay window)"));
             Process mpAttach = mpv; int myAttach = token; mpvWnd = IntPtr.Zero;
             if (!embedded) new Thread(() =>
             {
@@ -1241,11 +1269,11 @@ namespace NextBoost
             }) { IsBackground = true }.Start();
             SetStatus(c.Name + " — opening…");
             int my = token; Process mp = mpv; string pn = pipeName;
-            new Thread(() => Watch(mp, pn, my, presetIdx, c.Name)) { IsBackground = true }.Start();
+            new Thread(() => Watch(mp, pn, my, presetIdx, TitleFor(c), c)) { IsBackground = true }.Start();
         }
 
         // ---------- مراقبة الأداء لحظياً + أحداث mpv (الشاشة الكاملة / ESC) ----------
-        void Watch(Process p, string pipe, int my, int startPreset, string title)
+        void Watch(Process p, string pipe, int my, int startPreset, string title, Channel playing)
         {
             var ipc = new MpvIpc();
             if (!ipc.Connect(pipe, 20000)) { SetStatus("Could not connect to mpv"); return; }
@@ -1257,6 +1285,8 @@ namespace NextBoost
                 if (l.Contains("\"name\":\"fullscreen\"") && l.Contains("\"data\":true"))
                 { ipc.Send("{\"command\":[\"set_property\",\"fullscreen\",false]}"); BeginInvoke(new Action(ToggleVideoFull)); }
                 else if (l.Contains("nb-esc")) { if (videoFull) BeginInvoke(new Action(ToggleVideoFull)); }
+                else if (l.Contains("\"event\":\"end-file\"")) { if (l.Contains("\"reason\":\"eof\"")) eofFlag = true; }   // انتهى الفيلم/الحلقة لحاله (مو q ولا إيقاف)
+                else if (l.Contains("\"event\":\"playback-restart\"")) Interlocked.Exchange(ref restartTicks, DateTime.Now.Ticks);   // بعد كل تقديم/تأخير
                 else if (l.Contains("\"name\":\"volume\""))
                 {
                     var m = Regex.Match(l, "\"data\":(-?[\\d.]+)"); double v;
@@ -1274,14 +1304,23 @@ namespace NextBoost
             ipc.Send("{\"command\":[\"observe_property\",3,\"mute\"]}");
             ApplyFilter(ipc);
             var hist = new Queue<KeyValuePair<DateTime, long>>(); DateTime warm = DateTime.Now.AddSeconds(14); string gpu = "";
-            DateTime lastGpu = DateTime.MinValue; string vinfo = ""; int cur = startPreset; bool infoDone = false;
+            DateTime lastGpu = DateTime.MinValue; string vinfo = ""; int cur = startPreset; bool infoDone = false; long lastRestart = 0; bool vod = playing != null && playing.Kind != null;
             try
             {
-                while (!p.HasExited && token == my && !ipc.Closed)
+                // أفلام ومسلسلات: mpv ما يقفل نفسه بعد نهاية الملف (يظل خامل بنافذة سودا)، فنعتمد على حدث end-file ونتحرك بنفسنا
+                while (!p.HasExited && token == my && !ipc.Closed && !(vod && eofFlag))
                 {
-                    Thread.Sleep(3000);
+                    for (int w = 0; w < 10 && !(vod && eofFlag); w++) Thread.Sleep(300);
+                    if (vod && eofFlag) break;
                     if (WindowState == FormWindowState.Minimized) continue;
                     long drops = 0, decd = 0; long.TryParse(ipc.Get("frame-drop-count") ?? "0", out drops); long.TryParse(ipc.Get("decoder-frame-drop-count") ?? "0", out decd);
+                    if (playing != null && playing.Kind != null)
+                    {
+                        // أفلام ومسلسلات: التقديم يسبب فريمات مسقطة لحظية ما تدل على ضعف الكرت، فنعطي فترة سماح قبل ما يفكّر التخفيف التلقائي
+                        long rt = Interlocked.Read(ref restartTicks);
+                        if (rt != lastRestart) { lastRestart = rt; if (warm < DateTime.Now.AddSeconds(12)) warm = DateTime.Now.AddSeconds(12); hist.Clear(); }
+                        SaveProgress(ipc, playing);
+                    }
                     if (!infoDone && DateTime.Now > warm.AddSeconds(-8))
                     {
                         string w = ipc.Get("video-params/w"), h = ipc.Get("video-params/h"), fps = ipc.Get("estimated-vf-fps"), hw = ipc.Get("hwdec-current");
@@ -1307,7 +1346,23 @@ namespace NextBoost
                 }
             }
             catch (Exception ex) { Log.Write("monitor ended: " + ex.Message); }
-            if (token == my) { try { BeginInvoke(new Action(() => { if (token == my) { mpvWnd = IntPtr.Zero; ExitPlaying(); SetStatus("Stream ended / mpv closed"); } })); } catch { } }
+            if (playing != null && playing.Kind != null) VodEnded(playing);
+            Channel nx = token == my ? NextAfter(playing) : null;   // خلصت الحلقة لحالها: نكمّل الحلقة اللي بعدها بنفس مستوى التحسين الحالي
+            if (playing != null && playing.Kind != null) Log.Write("playback ended: eof=" + eofFlag + " mine=" + (token == my) + " next=" + (nx != null) + " queue=" + (playQueue != null ? playQueue.Count : -1));
+            if (nx != null) { try { BeginInvoke(new Action(() => { if (token == my) { SetStatus("Next episode…"); StartMpv(nx, cur, true); } })); } catch { } return; }
+            if (token == my)
+            {
+                try
+                {
+                    BeginInvoke(new Action(() =>
+                    {
+                        if (token != my) return;
+                        if (vod && eofFlag) { StopMpv(false); SetStatus("Finished   —   " + playing.Name); }   // خلص الفيلم/آخر حلقة: نقفل mpv الخامل ونرجع للتفاصيل
+                        else { mpvWnd = IntPtr.Zero; ExitPlaying(); SetStatus("Stream ended / mpv closed"); }
+                    }));
+                }
+                catch { }
+            }
         }
     }
 
