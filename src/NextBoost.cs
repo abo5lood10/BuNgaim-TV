@@ -867,7 +867,9 @@ namespace NextBoost
                 {
                     int vx = x0 + lw + 12, vy = yTop, vw = W - vx - 16, vh = H - barH - 6 - vy;
                     cards.Add(new RectangleF(vx, vy, Math.Max(120, vw), Math.Max(120, vh))); int vpad = 10;   // إطار زجاجي حول الفيديو مثل بطاقات القنوات
-                    videoPanel.SetBounds(vx + vpad, vy + vpad, Math.Max(100, vw - 2 * vpad), Math.Max(100, vh - 2 * vpad)); videoPanel.Region = new Region(T.RR(new RectangleF(0, 0, videoPanel.Width, videoPanel.Height), VideoRadius));
+                    int trH = 50;   // شريط التشغيل (أفلام ومسلسلات) تحت الفيديو داخل نفس الإطار
+                    videoPanel.SetBounds(vx + vpad, vy + vpad, Math.Max(100, vw - 2 * vpad), Math.Max(100, vh - 2 * vpad - trH));
+                    PlaceTransport(vx + vpad, vy + vh - vpad - 40, vw - 2 * vpad); videoPanel.Region = new Region(T.RR(new RectangleF(0, 0, videoPanel.Width, videoPanel.Height), VideoRadius));
                     videoPanel.Visible = true; videoPanel.BringToFront(); videoPanel.Invalidate();
                 }
 
@@ -1106,19 +1108,20 @@ namespace NextBoost
         {
             if (openSeries != null) { ShowSeasonMenu(); return; }
             var counts = all.GroupBy(x => x.Cat ?? "").ToDictionary(g => g.Key, g => g.Count());
-            var m = T.NewMenu();
-            var all0 = new ToolStripMenuItem("All categories  (" + all.Count + ")") { Checked = catIdx == 0 }; all0.Click += (s, e) => SetChip(0); m.Items.Add(all0);
+            // قائمة بشريط تمرير وعجلة ماوس (قائمة ويندوز العادية ما فيها غير الأسهم وتعلّق مع مئات التصنيفات)
+            var list = new List<CatItem>(catOrder.Count + 3);
+            list.Add(new CatItem { Text = "All categories  (" + all.Count + ")", Checked = catIdx == 0, Act = () => SetChip(0) });
             bool sportsDone = false, sep = false;
             for (int i = 0; i < catOrder.Count; i++)
             {
                 int k = i + 1; string nm = catOrder[i]; bool sp = mode == Live && SportsRx.IsMatch(nm);
-                if (!sep && i == 0 && sp) { m.Items.Add(new ToolStripSeparator()); sep = true; }
-                if (!sp && !sportsDone) { m.Items.Add(new ToolStripSeparator()); sportsDone = true; }
-                var it = new ToolStripMenuItem(EnName(nm) + "   (" + counts[nm] + ")") { Checked = catIdx == k };
-                it.Click += (s, e) => { catIdx = k; tgFav.On = false; tgFav.Invalidate(); ClearChips(); cmdCat.Text2 = EnName(nm).Length > 22 ? EnName(nm).Substring(0, 22) + "…" : EnName(nm); cmdCat.Invalidate(); Refilter(); };
-                m.Items.Add(it);
+                if (!sep && i == 0 && sp) { list.Add(new CatItem { Sep = true }); sep = true; }
+                if (!sp && !sportsDone) { list.Add(new CatItem { Sep = true }); sportsDone = true; }
+                list.Add(new CatItem { Text = EnName(nm) + "   (" + counts[nm] + ")", Checked = catIdx == k, Act = () => { catIdx = k; tgFav.On = false; tgFav.Invalidate(); ClearChips(); cmdCat.Text2 = EnName(nm).Length > 22 ? EnName(nm).Substring(0, 22) + "…" : EnName(nm); cmdCat.Invalidate(); Refilter(); } });
             }
-            m.Show(cmdCat, new Point(0, cmdCat.Height + 2));
+            int h = Math.Min(list.Count * CatPopup.RowH + 2 * CatPopup.Pad, Math.Max(240, (int)((Screen.FromControl(this).WorkingArea.Height - 260) * 0.75)));
+            var pop = new CatPopup(list, Math.Max(cmdCat.Width, 320), h);
+            Point at = cmdCat.PointToScreen(new Point(0, cmdCat.Height + 2)); pop.Location = at; pop.Show(this);
         }
 
         void Refilter()
@@ -1287,6 +1290,12 @@ namespace NextBoost
                 else if (l.Contains("nb-esc")) { if (videoFull) BeginInvoke(new Action(ToggleVideoFull)); }
                 else if (l.Contains("\"event\":\"end-file\"")) { if (l.Contains("\"reason\":\"eof\"")) eofFlag = true; }   // انتهى الفيلم/الحلقة لحاله (مو q ولا إيقاف)
                 else if (l.Contains("\"event\":\"playback-restart\"")) Interlocked.Exchange(ref restartTicks, DateTime.Now.Ticks);   // بعد كل تقديم/تأخير
+                else if (l.Contains("\"name\":\"pause\"")) { bool pz = l.Contains("\"data\":true"); BeginInvoke(new Action(() => { paused = pz; SyncPause(); })); }
+                else if (l.Contains("\"name\":\"time-pos\"") || l.Contains("\"name\":\"duration\"") || l.Contains("\"name\":\"demuxer-cache-time\""))
+                {
+                    var m = Regex.Match(l, "\"data\":(-?[\\d.]+)"); double v;
+                    if (m.Success && double.TryParse(m.Groups[1].Value, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out v)) { if (l.Contains("\"name\":\"time-pos\"")) curPos = v; else if (l.Contains("\"name\":\"duration\"")) curDur = v; else curCache = v; }
+                }
                 else if (l.Contains("\"name\":\"volume\""))
                 {
                     var m = Regex.Match(l, "\"data\":(-?[\\d.]+)"); double v;
@@ -1301,7 +1310,8 @@ namespace NextBoost
             curIpc = ipc;
             ipc.Send("{\"command\":[\"observe_property\",1,\"fullscreen\"]}");
             ipc.Send("{\"command\":[\"observe_property\",2,\"volume\"]}");
-            ipc.Send("{\"command\":[\"observe_property\",3,\"mute\"]}");
+            ipc.Send("{\"command\":[\"observe_property\",3,\"mute\"]}"); ipc.Send("{\"command\":[\"observe_property\",6,\"pause\"]}");
+            ipc.Send("{\"command\":[\"observe_property\",4,\"time-pos\"]}"); ipc.Send("{\"command\":[\"observe_property\",5,\"duration\"]}"); ipc.Send("{\"command\":[\"observe_property\",7,\"demuxer-cache-time\"]}");
             ApplyFilter(ipc);
             var hist = new Queue<KeyValuePair<DateTime, long>>(); DateTime warm = DateTime.Now.AddSeconds(14); string gpu = "";
             DateTime lastGpu = DateTime.MinValue; string vinfo = ""; int cur = startPreset; bool infoDone = false; long lastRestart = 0; bool vod = playing != null && playing.Kind != null;

@@ -145,6 +145,7 @@ namespace NextBoost
                           if (kind == "vol") { g.DrawArc(p, cx - s * 0.15f, cy - s * 0.30f, s * 0.55f, s * 0.60f, -50, 100); g.DrawArc(p, cx - s * 0.15f, cy - s * 0.52f, s * 0.90f, s * 1.04f, -50, 100); }
                           else { g.DrawLine(p, cx + s * 0.2f, cy - s * 0.3f, cx + s * 0.75f, cy + s * 0.3f); g.DrawLine(p, cx + s * 0.2f, cy + s * 0.3f, cx + s * 0.75f, cy - s * 0.3f); } break; }
                     case "chev": g.DrawLines(p, new PointF[] { new PointF(cx - s * 0.5f, cy - s * 0.25f), new PointF(cx, cy + s * 0.3f), new PointF(cx + s * 0.5f, cy - s * 0.25f) }); break;
+                    case "pause": g.FillRectangle(b, cx - s * 0.5f, cy - s * 0.5f, s * 0.34f, s); g.FillRectangle(b, cx + s * 0.16f, cy - s * 0.5f, s * 0.34f, s); break;
                     case "back": g.DrawLines(p, new PointF[] { new PointF(cx + s * 0.28f, cy - s * 0.5f), new PointF(cx - s * 0.28f, cy), new PointF(cx + s * 0.28f, cy + s * 0.5f) }); break;
                     case "star":
                         var pts = new PointF[10];
@@ -601,7 +602,7 @@ namespace NextBoost
     // فحص التحديث (نفس فكرة DsMaN): ملف نصي صغير فيه version=... و url=... على رابط أو مسار. التحديث ما يتم إلا لما المستخدم يضغط الزر.
     static class Updater
     {
-        public const string Version = "1.8";
+        public const string Version = "1.9";
         public const string DefaultSource = "https://raw.githubusercontent.com/abo5lood10/BuNgaim-TV/main/update.txt";
         public static string Source = "";   // يتبدّل من settings.ini (UpdateUrl): رابط أو مسار ملف
         public static volatile bool Available, Busy; public static string NewVersion = "", DownloadUrl = "", Message = "";

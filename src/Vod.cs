@@ -175,14 +175,28 @@ namespace NextBoost
     // شريط التحكم فوق الفيديو بوضع الشاشة الكاملة: نافذة مستقلة (نافذة mpv تغطي أي عنصر داخل نافذة البرنامج)، يطلع لما تحرك الماوس ويختفي بعد 3 ثواني
     class FsBar : Form, IBackHost
     {
-        public const int W = 800, H = 66; Bitmap bg; public Bitmap Bg { get { return bg; } }
-        public VolSlide Vol = new VolSlide(); public Cmd Mute;
+        public const int W = 640, HL = 66, HV = 108; Bitmap bg; public Bitmap Bg { get { return bg; } }
+        public VolSlide Vol = new VolSlide(); public Cmd Mute, Pb; public SeekBar Seek = new SeekBar(); readonly List<Control> row = new List<Control>(); public bool Vod; Action liveAct, pauseAct;
         protected override bool ShowWithoutActivation { get { return true; } }
         protected override CreateParams CreateParams { get { var cp = base.CreateParams; cp.ExStyle |= 0x08000000 | 0x80; return cp; } }   // NOACTIVATE | TOOLWINDOW
-        public FsBar(Action<int> seek, Action toggleMute, Action exit)
+        public FsBar(Action<int> seek, Action toggleMute, Action exit, Action pause)
         {
-            FormBorderStyle = FormBorderStyle.None; ShowInTaskbar = false; TopMost = true; StartPosition = FormStartPosition.Manual; ClientSize = new Size(W, H); BackColor = T.WindowBack;
-            Region = new Region(T.RR(new RectangleF(0, 0, W, H), 20));
+            pauseAct = pause; liveAct = delegate { seek(99999); };
+            FormBorderStyle = FormBorderStyle.None; ShowInTaskbar = false; TopMost = true; StartPosition = FormStartPosition.Manual; BackColor = T.WindowBack;
+            int x = 14, h = 40;
+            string[] lab = { "-10s", "Live", "+10s" }; int[] sec = { -10, 99999, 10 };   // -10 | تشغيل/إيقاف (أو Live بالبث) | +10
+            for (int i = 0; i < 3; i++) { int s = sec[i]; var c = new Cmd(lab[i], delegate { seek(s); }, false) { Bounds = new Rectangle(x, 0, 66, h) }; row.Add(c); if (i == 1) Pb = c; x += 72; }
+            Mute = new Cmd("", toggleMute, false) { Glyph = "vol", Bounds = new Rectangle(x + 4, 0, 44, h) }; row.Add(Mute); x += 56;
+            Vol.Bounds = new Rectangle(x, 0, W - 14 - 56 - 12 - x, h); row.Add(Vol);
+            row.Add(new Cmd("", exit, true) { Glyph = "full", Bounds = new Rectangle(W - 14 - 56, 0, 56, h) });   // زر الخروج أيقونة فقط
+            foreach (Control c in row) Controls.Add(c);
+            Seek.Bounds = new Rectangle(14, 10, W - 28, 36); Controls.Add(Seek);
+            SetVod(false);
+        }
+        // أفلام ومسلسلات: صف إضافي فيه شريط سحب للتقديم لأي مكان
+        public void SetVod(bool v)
+        {
+            Vod = v; int H = v ? HV : HL; ClientSize = new Size(W, H); Region = new Region(T.RR(new RectangleF(0, 0, W, H), 20));
             bg = new Bitmap(W, H);
             using (Graphics g = Graphics.FromImage(bg))
             {
@@ -190,19 +204,141 @@ namespace NextBoost
                 using (LinearGradientBrush b = new LinearGradientBrush(new Rectangle(0, 0, W, H), Color.FromArgb(52, 82, 64), Color.FromArgb(15, 33, 22), 62f)) g.FillRectangle(b, 0, 0, W, H);
                 T.Card(g, new RectangleF(1, 1, W - 3, H - 3), 20);
             }
-            int x = 14, y = 13, h = 40;
-            string[] lab = { "-30s", "-10s", "+10s", "Live" }; int[] sec = { -30, -10, 10, 99999 };
-            for (int i = 0; i < 4; i++) { int s = sec[i]; Controls.Add(new Cmd(lab[i], delegate { seek(s); }, false) { Bounds = new Rectangle(x, y, 66, h) }); x += 72; }
-            Mute = new Cmd("", toggleMute, false) { Glyph = "vol", Bounds = new Rectangle(x + 4, y, 44, h) }; Controls.Add(Mute); x += 56;
-            Vol.Bounds = new Rectangle(x, y, 250, h); Controls.Add(Vol); x += 262;
-            Controls.Add(new Cmd("Exit fullscreen", exit, true) { Bounds = new Rectangle(x, y, W - x - 14, h) });
+            foreach (Control c in row) c.Top = H - 13 - 40;
+            Seek.Visible = v; Pb.Text2 = v ? "" : "Live"; Pb.Glyph = v ? "pause" : null; Pb.Act = v ? pauseAct : liveAct;   // أفلام ومسلسلات: زر تشغيل/إيقاف مكان Live
+            Pb.Invalidate(); Invalidate();
         }
         protected override void OnPaint(PaintEventArgs e) { e.Graphics.DrawImageUnscaled(bg, 0, 0); }
     }
 
+    // شريط سحب للتقديم والتأخير (للأفلام والمسلسلات): تسحب الدائرة وتفلت فيقفز mpv للمكان
+    class SeekBar : VC
+    {
+        public double Frac; public string Label = ""; public bool Dragging; public event Action<double> Commit;
+        const int LabelW = 150;
+        float L { get { return 8; } } float Rr { get { return Width - LabelW - 6; } }
+        void SetFrom(int mx) { Frac = Math.Max(0, Math.Min(1, (mx - L) / (Rr - L))); Invalidate(); }
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            Graphics g = e.Graphics; T.Setup(g); float cy = Height / 2f, x = L + (float)Frac * (Rr - L);
+            using (Pen p = new Pen(Color.FromArgb(60, 255, 255, 255), 6) { StartCap = LineCap.Round, EndCap = LineCap.Round }) g.DrawLine(p, L, cy, Rr, cy);
+            using (Pen p = new Pen(T.Green, 6) { StartCap = LineCap.Round, EndCap = LineCap.Round }) g.DrawLine(p, L, cy, Math.Max(L + 0.1f, x), cy);
+            using (Brush b = new SolidBrush(Color.FromArgb(60, 0, 0, 0))) g.FillEllipse(b, x - 9, cy - 8, 20, 20);
+            using (Brush b = new SolidBrush(Color.White)) g.FillEllipse(b, x - 10, cy - 10, 20, 20);
+            T.Txt(g, Label, T.F(9.5f, FontStyle.Bold), T.Text, new RectangleF(Width - LabelW, 0, LabelW, Height), StringAlignment.Center);
+        }
+        protected override void OnMouseDown(MouseEventArgs e) { if (e.Button == MouseButtons.Left) { Dragging = true; Capture = true; SetFrom(e.X); } }
+        protected override void OnMouseMove(MouseEventArgs e) { base.OnMouseMove(e); if (Dragging) SetFrom(e.X); }
+        protected override void OnMouseUp(MouseEventArgs e) { if (!Dragging) return; Dragging = false; Capture = false; SetFrom(e.X); if (Commit != null) Commit(Frac); }
+    }
+
+    class CatItem { public string Text; public bool Sep, Checked; public Action Act; }
+
+    // قائمة التصنيفات: نافذة منبثقة بشريط تمرير وعجلة ماوس، ترسم الصفوف الظاهرة بس (سريعة حتى مع مئات التصنيفات)
+    class CatPopup : Form, IBackHost
+    {
+        public const int RowH = 30, Pad = 8;
+        readonly List<CatItem> items; int top, hover = -1; readonly VScroll sb = new VScroll(); readonly Bitmap bg; public Bitmap Bg { get { return bg; } }
+        int Vis { get { return Math.Max(1, (Height - 2 * Pad) / RowH); } }
+        public CatPopup(List<CatItem> it, int w, int h)
+        {
+            items = it; FormBorderStyle = FormBorderStyle.None; ShowInTaskbar = false; StartPosition = FormStartPosition.Manual; ClientSize = new Size(w, h); BackColor = T.WindowBack; DoubleBuffered = true;
+            Region = new Region(T.RR(new RectangleF(0, 0, w, h), 14));
+            bg = new Bitmap(w, h);
+            using (Graphics g = Graphics.FromImage(bg))
+            {
+                T.Setup(g);
+                using (LinearGradientBrush b = new LinearGradientBrush(new Rectangle(0, 0, w, h + 1), Color.FromArgb(34, 68, 51), Color.FromArgb(20, 44, 33), 90f)) g.FillRectangle(b, 0, 0, w, h);
+                using (GraphicsPath p = T.RR(new RectangleF(0.5f, 0.5f, w - 1.5f, h - 1.5f), 14)) using (Pen pen = new Pen(Color.FromArgb(70, 255, 255, 255), 1.2f)) g.DrawPath(pen, p);
+            }
+            sb.Bounds = new Rectangle(w - 18, Pad + 2, 12, h - 2 * Pad - 4); sb.Total = items.Count; sb.VisibleCount = Vis; sb.Scrolled += i => SetTop(i);
+            sb.Visible = items.Count > Vis; Controls.Add(sb);
+            int c = items.FindIndex(x => x.Checked); if (c > 3) SetTop(c - 3);
+        }
+        void SetTop(int t)
+        {
+            top = Math.Max(0, Math.Min(Math.Max(0, items.Count - Vis), t)); sb.TopIndex = top; sb.Invalidate(); Invalidate();
+        }
+        int IndexAt(int y) { int r = (y - Pad) / RowH; int i = top + r; return y >= Pad && r < Vis && i < items.Count ? i : -1; }
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            Graphics g = e.Graphics; T.Setup(g); g.DrawImageUnscaled(bg, 0, 0); int rw = Width - 2 * Pad - (sb.Visible ? 14 : 0);
+            for (int r = 0; r < Vis && top + r < items.Count; r++)
+            {
+                CatItem it = items[top + r]; Rectangle row = new Rectangle(Pad, Pad + r * RowH, rw, RowH);
+                if (it.Sep) { using (Pen p = new Pen(Color.FromArgb(50, 255, 255, 255))) g.DrawLine(p, row.X + 8, row.Y + RowH / 2, row.Right - 8, row.Y + RowH / 2); continue; }
+                bool hot = top + r == hover;
+                if (hot)
+                    using (GraphicsPath p = T.RR(new RectangleF(row.X, row.Y + 1, row.Width, row.Height - 2), 9))
+                    {
+                        using (LinearGradientBrush b = new LinearGradientBrush(new Rectangle(row.X, row.Y, row.Width, row.Height + 1), Color.FromArgb(150, 52, 199, 89), Color.FromArgb(150, 22, 120, 46), 90f)) g.FillPath(b, p);
+                        using (Pen pen = new Pen(Color.FromArgb(90, 255, 255, 255))) g.DrawPath(pen, p);
+                    }
+                if (it.Checked) using (Brush b = new SolidBrush(hot ? Color.White : T.Green)) g.FillEllipse(b, row.X + 10, row.Y + RowH / 2 - 4, 8, 8);
+                T.Txt(g, it.Text, T.F(9.5f), hot ? Color.White : T.Text, new RectangleF(row.X + 28, row.Y, row.Width - 36, row.Height), StringAlignment.Near);
+            }
+        }
+        protected override void OnMouseMove(MouseEventArgs e) { int i = IndexAt(e.Y); if (i != hover) { hover = i; Invalidate(); } base.OnMouseMove(e); }
+        protected override void OnMouseLeave(EventArgs e) { hover = -1; Invalidate(); base.OnMouseLeave(e); }
+        protected override void OnMouseWheel(MouseEventArgs e) { SetTop(top + (e.Delta > 0 ? -3 : 3)); }
+        protected override void OnMouseClick(MouseEventArgs e)
+        {
+            int i = IndexAt(e.Y); if (e.Button != MouseButtons.Left || i < 0 || items[i].Sep) return;
+            Action act = items[i].Act; Close(); if (act != null) act();
+        }
+        protected override void OnDeactivate(EventArgs e) { base.OnDeactivate(e); Close(); }
+        protected override bool ProcessCmdKey(ref Message m, Keys k) { if (k == Keys.Escape) { Close(); return true; } return base.ProcessCmdKey(ref m, k); }
+    }
+
     partial class MainForm
     {
-        FsBar fsBar; System.Windows.Forms.Timer fsTimer; Point fsLast; DateTime fsMoved;
+        FsBar fsBar; volatile bool fsVod, fsLive; double curPos, curDur, curCache; System.Windows.Forms.Timer fsTimer; Point fsLast; DateTime fsMoved;
+
+        // ---------- شريط التشغيل تحت الفيديو (أفلام ومسلسلات): إيقاف/تشغيل وسحب للتقديم بدون ملء الشاشة ----------
+        Cmd btnPause; SeekBar seekMain; bool paused; System.Windows.Forms.Timer trTimer;
+        bool TransportOn { get { return playing && fsVod; } }
+        void TogglePause() { if (curIpc != null) curIpc.Send("{\"command\":[\"cycle\",\"pause\"]}"); }
+        const double LiveWindow = 120;   // البث المباشر: الشريط يغطي آخر دقيقتين (يمين = على الهواء)
+        void SeekPct(double f)
+        {
+            if (curIpc == null) return;
+            if (fsLive) { double t = f >= 0.98 ? curCache : Math.Max(0, curCache - (1 - f) * LiveWindow); curIpc.Send("{\"command\":[\"seek\"," + t.ToString("0.##", Inv) + ",\"absolute\"]}"); return; }
+            curIpc.Send("{\"command\":[\"seek\"," + (f * 100).ToString("0.###", Inv) + ",\"absolute-percent\"]}");
+        }
+        // موضع الشريط والنص: فيلم = الوقت/المدة؛ بث = كم متأخر عن الهواء
+        void SeekModel(out double frac, out string label)
+        {
+            if (!fsLive) { double d = curDur, ps = curPos; frac = d > 0 ? Math.Min(1, ps / d) : 0; label = Clock(ps) + " / " + Clock(d); return; }
+            double lag = curCache > 0 ? Math.Max(0, curCache - curPos) : 0; frac = 1 - Math.Min(lag, LiveWindow) / LiveWindow; label = lag < 4 ? "LIVE" : "-" + Clock(lag);
+        }
+        void SyncPause()
+        {
+            btnPause.Glyph = paused ? "play" : "pause"; btnPause.Invalidate();
+            if (fsBar != null && fsBar.Vod) { fsBar.Pb.Glyph = paused ? "play" : "pause"; fsBar.Pb.Invalidate(); }
+        }
+        void BuildTransport()
+        {
+            btnPause = new Cmd("", TogglePause, false) { Glyph = "pause" }; seekMain = new SeekBar(); seekMain.Commit += SeekPct;
+            foreach (Control c in new Control[] { btnPause, seekMain }) { Controls.Add(c); uiControls.Add(c); }
+            trTimer = new System.Windows.Forms.Timer { Interval = 250 };
+            trTimer.Tick += (s, e) =>
+            {
+                if (!seekMain.Visible || seekMain.Dragging) return;
+                double fr; string lb; SeekModel(out fr, out lb); seekMain.Frac = fr; seekMain.Label = lb; seekMain.Invalidate();
+            };
+            trTimer.Start();
+        }
+        // صف التشغيل: [إيقاف] [شريط التقديم ....] [كتم] [صوت] [ملء الشاشة]؛ لو النافذة ضيقة يرجعون للشريط السفلي
+        void PlaceTransport(int x, int y, int w)
+        {
+            btnPause.Bounds = R(x, y, 46, 38); int right = x + w;
+            if (w >= 760)   // الكتم والصوت والملء الشاشة دايماً في هذا الصف (حتى قبل التشغيل)
+            {
+                btnFull.Bounds = R(right - 130, y + 3, 130, 32); vol.Bounds = R(btnFull.Left - 8 - 220, y + 3, 220, 32); btnMute.Bounds = R(vol.Left - 4 - 40, y + 3, 40, 32);
+                right = btnMute.Left - 10; status.Width = Math.Max(100, ClientSize.Width - 2 * status.Left);
+            }
+            seekMain.Bounds = R(x + 54, y, Math.Max(60, right - (x + 54)), 38);
+        }
 
         void FsSeek(int sec) { if (curIpc != null) curIpc.Send("{\"command\":[\"seek\"," + sec + ",\"relative\"]}"); }
 
@@ -213,8 +349,9 @@ namespace NextBoost
             {
                 if (fsBar == null)
                 {
-                    fsBar = new FsBar(FsSeek, delegate { if (curIpc != null) curIpc.Send("{\"command\":[\"cycle\",\"mute\"]}"); }, delegate { if (videoFull) ToggleVideoFull(); });
+                    fsBar = new FsBar(FsSeek, delegate { if (curIpc != null) curIpc.Send("{\"command\":[\"cycle\",\"mute\"]}"); }, delegate { if (videoFull) ToggleVideoFull(); }, TogglePause);
                     fsBar.Vol.Changed += v => vol.Nudge(v);
+                    fsBar.Seek.Commit += SeekPct;
                     fsTimer = new System.Windows.Forms.Timer { Interval = 120 }; fsTimer.Tick += FsTick;
                 }
                 fsLast = Cursor.Position; fsMoved = DateTime.MinValue; fsTimer.Start();
@@ -225,16 +362,25 @@ namespace NextBoost
         void FsTick(object s, EventArgs e)
         {
             if (!videoFull || fsBar == null) return;
-            Point p = Cursor.Position; bool overBar = fsBar.Visible && fsBar.Bounds.Contains(p);
-            if (p != fsLast || overBar) { fsLast = p; fsMoved = DateTime.Now; }
-            bool show = (DateTime.Now - fsMoved).TotalSeconds < 3;
+            // يطلع بس لما تنزّل الماوس لأسفل حافة الشاشة (أو وهو فوق الشريط نفسه)، ويختفي بعد لحظة من ابتعادك
+            Point p = Cursor.Position; Rectangle b = Bounds;
+            bool overBar = fsBar.Visible && (fsBar.Bounds.Contains(p) || fsBar.Seek.Dragging);
+            bool atEdge = p.Y >= b.Bottom - 170 && p.X >= b.Left && p.X < b.Right;
+            if (atEdge || overBar) fsMoved = DateTime.Now;
+            bool show = (DateTime.Now - fsMoved).TotalSeconds < 1.2;
             if (show && !fsBar.Visible)
             {
-                Rectangle b = Bounds; fsBar.Location = new Point(b.Left + (b.Width - FsBar.W) / 2, b.Bottom - FsBar.H - 150);
+                if (fsBar.Vod != fsVod) fsBar.SetVod(fsVod);
+                fsBar.Location = new Point(b.Left + (b.Width - FsBar.W) / 2, b.Bottom - fsBar.Height - 16);
                 fsBar.Vol.SetSilent(vol.Value); fsBar.Mute.Glyph = muted ? "mute" : "vol"; fsBar.Show(this);
             }
             else if (!show && fsBar.Visible) fsBar.Hide();
-            if (fsBar.Visible) { fsBar.Vol.SetSilent(vol.Value); string gl = muted ? "mute" : "vol"; if (fsBar.Mute.Glyph != gl) { fsBar.Mute.Glyph = gl; fsBar.Mute.Invalidate(); } }
+            if (fsBar.Visible)
+            {
+                fsBar.Vol.SetSilent(vol.Value); string gl = muted ? "mute" : "vol"; if (fsBar.Mute.Glyph != gl) { fsBar.Mute.Glyph = gl; fsBar.Mute.Invalidate(); }
+                if (fsBar.Vod) { string pg = paused ? "play" : "pause"; if (fsBar.Pb.Glyph != pg) { fsBar.Pb.Glyph = pg; fsBar.Pb.Invalidate(); } }
+                if (fsBar.Vod && !fsBar.Seek.Dragging) { double fr; string lb; SeekModel(out fr, out lb); fsBar.Seek.Frac = fr; fsBar.Seek.Label = lb; fsBar.Seek.Invalidate(); }
+            }
         }
 
         const int Live = 0, Movies = 1, Series = 2;
@@ -271,7 +417,7 @@ namespace NextBoost
 
         void BuildVodUi()
         {
-            autoNext = cfg.Int("AutoNext", 1) == 1;
+            autoNext = cfg.Int("AutoNext", 1) == 1; BuildTransport();
             tgLive = new Tog("Live TV", true, null); tgMovies = new Tog("Movies", false, null); tgSeries = new Tog("Series", false, null);
             tgLive.Changed += () => SetMode(Live); tgMovies.Changed += () => SetMode(Movies); tgSeries.Changed += () => SetMode(Series);
             btnBack = new BackBtn(delegate { LeaveEpisodes(true); }) { Visible = false };
@@ -377,7 +523,7 @@ namespace NextBoost
         {
             bool ep = openSeries != null; int n = ep ? Math.Min(chips.Count, epSeasons.Count) : ChipLabels().Length;
             for (int i = 0; i < chips.Count; i++) chips[i].Visible = i < n;
-            tgFav.Visible = !ep; btnBack.Visible = ep;
+            tgFav.Visible = !ep; btnBack.Visible = ep; btnPause.Visible = seekMain.Visible = TransportOn;
         }
 
         void PlaceModeToggles()
@@ -832,7 +978,8 @@ namespace NextBoost
         // قبل التشغيل: نجهّز قائمة الحلقات عشان التشغيل التلقائي للحلقة اللي بعدها يشتغل حتى لو طلعت من صفحة المسلسل
         void PrepareVodPlay(Channel c, bool auto)
         {
-            eofFlag = false;
+            bool wasVod = fsVod; eofFlag = false; fsVod = true; fsLive = c.Kind == null; curPos = 0; curDur = 0; curCache = 0; paused = false; if (btnPause != null) SyncPause();
+            if (wasVod != fsVod && IsHandleCreated) ApplyLayout();   // يظهر/يختفي شريط التشغيل تحت الفيديو
             if (c.Kind != "ep") { playQueue = null; playSeries = null; return; }
             if (!auto && epSeasons != null) { playQueue = epSeasons.Values.SelectMany(x => x).ToList(); playSeries = openSeries; }
         }
